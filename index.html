@@ -37,6 +37,7 @@ button span{display:block;font-weight:500;font-size:11px;color:var(--mut)}
 <div id="tags"></div>
 <div id="msg"></div>
 <div id="fight">FIGHT!</div>
+<div id="hud" style="display:none;position:fixed;left:8px;right:8px;bottom:64px;font:12px ui-monospace,Menlo,monospace;color:#cfe;text-shadow:0 1px 3px #000;pointer-events:none"></div>
 <div id="lost" style="display:none;position:fixed;top:64px;left:0;right:0;text-align:center;font-weight:700;color:#ffd23f;text-shadow:0 2px 6px #000">Searching for the cards…</div>
 <div id="bar"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -241,18 +242,18 @@ const renderer=new THREE.WebGLRenderer({antialias:false,alpha:true});
 renderer.shadowMap.enabled=true;$('#stage').appendChild(renderer.domElement);
 const scene=new THREE.Scene();scene.background=new THREE.Color('#171b27');
 const cam=new THREE.PerspectiveCamera(42,1,0.1,100);
-const ctl=new THREE.OrbitControls(cam,renderer.domElement);ctl.target.set(0,0.8,2);ctl.enableDamping=true;ctl.enablePan=false;ctl.minDistance=7;ctl.maxDistance=30;ctl.maxPolarAngle=1.45;
+const ctl=new THREE.OrbitControls(cam,renderer.domElement);ctl.target.set(0,0.4,0.6);ctl.enableDamping=true;ctl.enablePan=false;ctl.minDistance=7;ctl.maxDistance=30;ctl.maxPolarAngle=1.45;
 scene.add(new THREE.HemisphereLight('#ffffff','#6a6f86',0.8));
-const sun=new THREE.DirectionalLight('#ffffff',0.7);sun.position.set(5,10,6);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);Object.assign(sun.shadow.camera,{left:-10,right:10,top:10,bottom:10});scene.add(sun);
+const sun=new THREE.DirectionalLight('#ffffff',0.7);sun.position.set(5,10,6);scene.add(sun.target);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);Object.assign(sun.shadow.camera,{left:-10,right:10,top:10,bottom:10});scene.add(sun);
 const floor=new THREE.Mesh(new THREE.PlaneGeometry(40,40),new THREE.MeshLambertMaterial({color:'#2a3142'}));floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
 const grid=new THREE.GridHelper(40,40,'#3b4560','#303850');grid.position.y=0.01;scene.add(grid);
 const fxGroup=new THREE.Group();scene.add(fxGroup);
 function fit(){if(AR){arResize();return;}const a=innerWidth/innerHeight;renderer.setPixelRatio(Math.min(devicePixelRatio||1,2)*0.5);renderer.setSize(innerWidth,innerHeight,false);cam.aspect=a;cam.updateProjectionMatrix();
-  const d=15*clamp(1.15/a,1,2.3);cam.position.set(0,ctl.target.y+d*0.55,ctl.target.z+d*0.83);}
+  const d=11*clamp(1.15/a,1,2.3);cam.position.set(0,ctl.target.y+d*0.55,ctl.target.z+d*0.83);}
 addEventListener('resize',fit);fit();
 
 // ---------- cards ----------
-const CARDS={mark:{x:-3.6,z:5.0,disc:'#00ae67',name:'Mark'},chel:{x:3.2,z:5.0,disc:'#ffd954',name:'Chelsea'}};
+const CARDS={mark:{x:-3.4,z:0,disc:'#00ae67',name:'Mark'},chel:{x:3.4,z:0,disc:'#ffd954',name:'Chelsea'}};
 for(const k in CARDS){const c=CARDS[k];c.cv=document.createElement('canvas');c.cv.width=414;c.cv.height=735;c.ctx=c.cv.getContext('2d');
   c.tex=new THREE.CanvasTexture(c.cv);c.img=new Image();c.img.onload=()=>drawCard(k,c.empty);c.img.src=IMG[k];
   c.mesh=new THREE.Mesh(new THREE.PlaneGeometry(2.2,3.9),new THREE.MeshBasicMaterial({map:c.tex}));c.mesh.rotation.x=-Math.PI/2;c.mesh.position.set(c.x,0.03,c.z);c.mesh.userData.card=k;scene.add(c.mesh);}
@@ -261,18 +262,19 @@ function drawCard(k,empty){const c=CARDS[k];c.empty=empty;const x=c.ctx;x.fillSt
 async function cardFlash(k){const m=CARDS[k].mesh;await anim(500,t=>{m.position.y=0.03+Math.sin(t*Math.PI)*0.6;m.rotation.z=Math.sin(t*Math.PI*2)*0.12;});m.position.y=0.03;m.rotation.z=0;}
 
 // ---------- units ----------
+const K=0.56;
 function makeUnit(kind){
   const obj=kind==='mark'?buildMark():buildFox(kind==='small');const holder=new THREE.Group();holder.add(obj);holder.visible=false;holder.scale.setScalar(0.001);scene.add(holder);
-  const homes={mark:[-3.5,0.2],big:[2.6,-0.5],small:[4.3,1.0]};
-  return {kind,obj,holder,type:kind==='mark'?'croc':'fox',small:kind==='small',scale:kind==='small'?0.8:0.75,home:homes[kind],phase:Math.random()*6,sunk:false,mouth:kind==='mark'?1.0:(kind==='small'?1.1:1.5)};
+  const homes={mark:[CARDS.mark.x,0],big:[CARDS.chel.x-0.2,-0.5],small:[CARDS.chel.x+0.7,0.8]};
+  return {kind,obj,holder,type:kind==='mark'?'croc':'fox',small:kind==='small',scale:(kind==='small'?0.8:0.75)*K,home:homes[kind],phase:Math.random()*6,sunk:false,mouth:(kind==='mark'?1.0:(kind==='small'?1.1:1.5))*K};
 }
 function headingFor(u,dx,dz){return u.type==='croc'?Math.atan2(dz,-dx):Math.atan2(dx,dz);}
 async function turnTo(u,dx,dz,ms=300){const r0=u.holder.rotation.y,tg=headingFor(u,dx,dz);await anim(ms,t=>{u.holder.rotation.y=r0+angDiff(r0,tg)*t;});}
 async function walkTo(u,x,z,ms){const p=u.holder.position;const x0=p.x,z0=p.z,dx=x-x0,dz=z-z0;
   if(Math.hypot(dx,dz)>0.05){const tg=headingFor(u,dx,dz),r0=u.holder.rotation.y;await anim(ms,t=>{u.holder.rotation.y=r0+angDiff(r0,tg)*Math.min(1,t*4);p.x=x0+dx*t;p.z=z0+dz*t;p.y=u.sunk?p.y:Math.abs(Math.sin(t*ms/130))*0.14;});}
   if(!u.sunk)p.y=0;}
-async function popOut(u,cx,cz){u.holder.visible=true;u.holder.position.set(cx,0.05,cz);u.holder.rotation.y=headingFor(u,0,-1);
-  await anim(800,t=>{u.holder.scale.setScalar(Math.max(0.001,easeOutBack(t)*u.scale));u.holder.position.y=Math.sin(t*Math.PI)*1.2;});u.holder.position.y=0;}
+async function popOut(u,cx,cz){particles(new THREE.Vector3(cx,0.1,cz),new THREE.Vector3(cx,1.4,cz),{n:22,size:0.1,cols:['#ffffff','#ffd23f','#7be0ff'],spread:1.8,dur:700});u.holder.visible=true;u.holder.position.set(cx,0.05,cz);u.holder.rotation.y=headingFor(u,0,-1);
+  await anim(800,t=>{u.holder.scale.setScalar(Math.max(0.001,easeOutBack(t)*u.scale));u.holder.position.y=Math.sin(t*Math.PI)*0.8;});u.holder.position.y=0;}
 function idle(u,t){const d=u.obj.userData;t+=u.phase;const sp=u.small?1.8:1;
   if(d.kind==='mark'){d.body.position.y=Math.sin(t*2)*0.15;d.head.rotation.z=Math.sin(t*1.3)*0.06;d.head.rotation.y=Math.sin(t*0.7)*0.18;d.head.position.y=10+Math.sin(t*2)*0.15;d.tail.rotation.y=Math.sin(t*2.4)*0.25;d.halo.position.y=23+Math.sin(t*2.2)*0.6;d.halo.rotation.y=t*0.8;}
   else{d.body.scale.y=1+Math.sin(t*2.2*sp)*0.015;d.head.rotation.z=Math.sin(t*1.1*sp)*0.09;d.head.rotation.x=Math.sin(t*0.8*sp)*0.05;d.tail.rotation.y=Math.sin(t*3*sp)*0.22;}}
@@ -316,7 +318,7 @@ async function scan(k){
   refreshTags();
   if(order.length===1){
     setMsg(c.name+' looks and sniffs around…');
-    await Promise.all(f.units.map(u=>walkTo(u,u.home[0]+(u.kind==='mark'?0.2:0),2.4+(u.small?0.9:0),1500)));
+    await Promise.all(f.units.map(u=>walkTo(u,u.home[0]+(u.kind==='mark'?0.4:0),u.home[1]-1.4+(u.small?0.9:0),1200)));
     const r0=f.units.map(u=>u.holder.rotation.y);
     await anim(2600,t=>f.units.forEach((u,i)=>{u.holder.rotation.y=r0[i]+Math.sin(t*Math.PI*3)*0.8*(1-t*0.3);}));
     setMsg('Step 2 · Scan the second card','The new character will scare the first one');
@@ -328,15 +330,15 @@ async function scan(k){
 function scanUI2(){clearBar();const k=OTHER[order[0]];btn('Scan '+CARDS[k].name+'’s card',()=>scan(k),{cls:'main'});}
 async function scare(){
   const A=S[order[0]],B=S[order[1]],c=CARDS[order[1]];
-  const ax=A.units[0].holder.position.x;const tx=ax+(c.x>ax?3.4:-3.4);
+  const ax=A.units[0].holder.position.x;const tx=ax+(c.x>ax?2.4:-2.4);
   setMsg(c.name+' charges in!');
-  await Promise.all(B.units.map((u,i)=>walkTo(u,tx+(i?(c.x>ax?0.7:-0.7):0),2.4+(i?0.9:0),900)));
+  await Promise.all(B.units.map((u,i)=>walkTo(u,tx+(i?(c.x>ax?0.5:-0.5):0),ax*0+(i?0.7:-0.3),900)));
   await Promise.all([...B.units.map(u=>turnTo(u,ax-tx,0,250)),...A.units.map(u=>turnTo(u,tx-ax,0,250))]);
   popText(A.units[0].holder.position,'!','#ffd23f');
   const bp=B.units.map(u=>u.holder.position.clone()),ap=A.units.map(u=>u.holder.position.clone()),away=Math.sign(ax-tx);
   await anim(900,t=>{
     B.units.forEach((u,i)=>{u.holder.position.x=bp[i].x+Math.sin(t*60)*0.05;u.holder.scale.setScalar(u.scale*(1+Math.sin(t*Math.PI)*0.16));});
-    A.units.forEach((u,i)=>{const e=Math.min(1,t*3);u.holder.position.set(ap[i].x+away*0.9*e+Math.sin(t*50)*0.06*(1-t),Math.sin(Math.min(1,t*2.5)*Math.PI)*1.3,ap[i].z);});});
+    A.units.forEach((u,i)=>{const e=Math.min(1,t*3);u.holder.position.set(ap[i].x+away*0.6*e+Math.sin(t*50)*0.06*(1-t),Math.sin(Math.min(1,t*2.5)*Math.PI)*0.8,ap[i].z);});});
   A.units.forEach(u=>u.holder.position.y=0);
   setMsg('Both take battle positions…');
   await Promise.all([...A.units,...B.units].map(async u=>{await walkTo(u,u.home[0],u.home[1],1300);await turnTo(u,u.type==='croc'?1:-1,u.type==='croc'?0:0.7,350);}));
@@ -376,7 +378,7 @@ async function fightLoop(tok){
 }
 async function beginTurn(first){
   const f=S[turn];if(!first)f.pow=Math.min(3,f.pow+1);
-  if(f.guard){f.guard=false;for(const u of f.units)if(u.sunk){u.sunk=false;await anim(350,t=>{u.holder.position.y=-1.15*(1-t);});}}
+  if(f.guard){f.guard=false;for(const u of f.units)if(u.sunk){u.sunk=false;await anim(350,t=>{u.holder.position.y=-0.65*(1-t);});}}
   selUnit=0;refreshTags();
   setMsg('Player '+(order.indexOf(turn)+1)+' · '+CARDS[turn].name+'’s turn',OBS.length?'Objects on the table: the fighters go around them':'Put an object on the table, they will walk around it');
 }
@@ -400,18 +402,18 @@ function aiPick(){
 const OBS=[];
 function makeObsMesh(kind,r){
   const g=new THREE.Group();
-  if(kind==='virtual'){const m=new THREE.Mesh(new THREE.BoxGeometry(1.3,1.1,1.3),new THREE.MeshLambertMaterial({color:['#7b8cff','#ffb84d','#6fd6a8'][Math.floor(Math.random()*3)]}));m.position.y=0.55;m.castShadow=true;g.add(m);}
+  if(kind==='virtual'){const m=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.8,0.9),new THREE.MeshLambertMaterial({color:['#7b8cff','#ffb84d','#6fd6a8'][Math.floor(Math.random()*3)]}));m.position.y=0.4;m.castShadow=true;g.add(m);}
   else{const ring=new THREE.Mesh(new THREE.TorusGeometry(1,0.06,6,28),new THREE.MeshBasicMaterial({color:'#5be3ff'}));ring.rotation.x=Math.PI/2;ring.position.y=0.05;g.add(ring);
     const cyl=new THREE.Mesh(new THREE.CylinderGeometry(1,1,1.2,20,1,true),new THREE.MeshBasicMaterial({color:'#5be3ff',transparent:true,opacity:0.18,side:THREE.DoubleSide}));cyl.position.y=0.6;g.add(cyl);g.userData.scaled=true;}
   scene.add(g);return g;
 }
-function addObstacle(x,z,r,kind){
+function addObstacle(x,z,r,kind,label){
   const o={x,z,r,kind,miss:0,mesh:makeObsMesh(kind,r)};o.mesh.position.set(x,0,z);if(o.mesh.userData.scaled)o.mesh.scale.set(r,1,r);
-  OBS.push(o);anim(400,t=>{o.mesh.position.y=(1-t)*(1-t)*2.5;});popText(new THREE.Vector3(x,0,z),kind==='real'?'Object detected':'Object!','#5be3ff');return o;
+  OBS.push(o);anim(400,t=>{o.mesh.position.y=(1-t)*(1-t)*2.5;});popText(new THREE.Vector3(x,0,z),kind==='real'?(label||'Object'):'Object!','#5be3ff');return o;
 }
 function dropObstacle(o){const i=OBS.indexOf(o);if(i>=0)OBS.splice(i,1);anim(300,t=>o.mesh.scale.multiplyScalar(0.8)).then(()=>scene.remove(o.mesh));}
 function clearObstacles(){while(OBS.length)dropObstacle(OBS[0]);}
-function placeObstacle(x,z){if(state!=='fight')return;x=clamp(x,-5.5,5.5);z=clamp(z,-3,2.8);addObstacle(x,z,0.75,'virtual');}
+function placeObstacle(x,z){if(state!=='fight')return;x=clamp(x,-CARDS.chel.x-1.5,CARDS.chel.x+1.5);z=clamp(z,-2,2);addObstacle(x,z,0.55,'virtual');}
 
 // ----- path finding on a grid around obstacles -----
 const GX0=-8,GZ0=-3.8,CS=0.25,NX=64,NZ=32;
@@ -439,7 +441,7 @@ function findPath(sx,sz,ex,ez,margin){
 }
 function losClear(ax,az,bx,bz,margin=0.35){for(const o of OBS){if(Math.hypot(ax-o.x,az-o.z)<o.r+0.2||Math.hypot(bx-o.x,bz-o.z)<o.r+0.2)continue;const dx=bx-ax,dz=bz-az,l2=dx*dx+dz*dz||1;const t=clamp(((o.x-ax)*dx+(o.z-az)*dz)/l2,0,1);if(Math.hypot(ax+dx*t-o.x,az+dz*t-o.z)<o.r+margin)return false;}return true;}
 function blockedAt(x,z,margin){for(const o of OBS)if(Math.hypot(x-o.x,z-o.z)<o.r+margin)return true;return false;}
-const BODY=0.95;
+const BODY=0.55;const AX=()=>Math.abs(CARDS.chel.x)+2.6,AZ=2.6;
 async function walkPath(u,pts,speed,tries=3){
   const h=u.holder;
   for(let k=1;k<pts.length;k++){
@@ -454,20 +456,20 @@ async function walkPath(u,pts,speed,tries=3){
 // Move unit so it can hit the target: close enough for melee, or a clear line for ranged.
 async function escapeObstacle(u){
   const p=u.holder.position;if(!blockedAt(p.x,p.z,0.5))return;let best=null;
-  for(let r=0.5;r<4&&!best;r+=0.5)for(let a=0;a<360;a+=20){const x=p.x+Math.cos(a*Math.PI/180)*r,z=p.z+Math.sin(a*Math.PI/180)*r;if(x<-6.5||x>6.5||z<-3.2||z>3.2)continue;if(!blockedAt(x,z,BODY)){best=[x,z];break;}}
+  for(let r=0.5;r<4&&!best;r+=0.5)for(let a=0;a<360;a+=20){const x=p.x+Math.cos(a*Math.PI/180)*r,z=p.z+Math.sin(a*Math.PI/180)*r;if(Math.abs(x)>AX()||Math.abs(z)>AZ)continue;if(!blockedAt(x,z,BODY)){best=[x,z];break;}}
   if(best)await walkPath(u,[[p.x,p.z],best],3.5,0);
 }
 async function approach(u,mv,foe){
   await escapeObstacle(u);
   const tp=foe.units[0].holder.position,p=u.holder.position,melee=mv.fx==='bite'||mv.fx==='tail';
-  const R=melee?(u.type==='croc'?2.7:1.5):5,maxR=melee?R+0.3:8.5;
+  const R=melee?(u.type==='croc'?2.7:1.5)*K:3,maxR=melee?R+0.2:9;
   const dist=Math.hypot(tp.x-p.x,tp.z-p.z);
-  if(dist<=maxR&&(!melee||dist>=R-0.6)&&losClear(p.x,p.z,tp.x,tp.z)){await turnTo(u,tp.x-p.x,tp.z-p.z,250);return true;}
+  if(dist<=maxR&&(!melee||dist>=R*0.7)&&losClear(p.x,p.z,tp.x,tp.z)){await turnTo(u,tp.x-p.x,tp.z-p.z,250);return true;}
   const cands=[];
-  for(const rr of melee?[R]:[3.5,4.5,5.5,6.5])for(let a=0;a<360;a+=12){const x=tp.x+Math.cos(a*Math.PI/180)*rr,z=tp.z+Math.sin(a*Math.PI/180)*rr;
-    if(x<-6.5||x>6.5||z<-3.2||z>3.2)continue;if(blockedAt(x,z,BODY*0.7)||!losClear(x,z,tp.x,tp.z))continue;cands.push([x,z,Math.hypot(x-p.x,z-p.z)]);}
+  for(const rr of melee?[R]:[2,2.6,3.2,3.8])for(let a=0;a<360;a+=12){const x=tp.x+Math.cos(a*Math.PI/180)*rr,z=tp.z+Math.sin(a*Math.PI/180)*rr;
+    if(Math.abs(x)>AX()||Math.abs(z)>AZ)continue;if(blockedAt(x,z,BODY*0.7)||!losClear(x,z,tp.x,tp.z))continue;cands.push([x,z,Math.hypot(x-p.x,z-p.z)]);}
   cands.sort((a,b)=>a[2]-b[2]);
-  for(const c of cands.slice(0,8)){const path=findPath(p.x,p.z,c[0],c[1],BODY);if(path){await walkPath(u,path,u.small?4.2:3.2);await turnTo(u,tp.x-u.holder.position.x,tp.z-u.holder.position.z,250);return true;}}
+  for(const c of cands.slice(0,8)){const path=findPath(p.x,p.z,c[0],c[1],BODY);if(path){await walkPath(u,path,u.small?3:2.2);await turnTo(u,tp.x-u.holder.position.x,tp.z-u.holder.position.z,250);return true;}}
   return false;
 }
 const boxGeo=new THREE.BoxGeometry(1,1,1);
@@ -487,21 +489,21 @@ async function attackAnim(u,mv,foe){
   const tgt=foe.units[0],tp=tgt.holder.position,hp=u.holder.position,h=u.holder;
   if(mv.fx==='bite'||mv.fx==='tail'){
     const dir=new THREE.Vector3(tp.x-hp.x,0,tp.z-hp.z).normalize(),p0=hp.clone(),r0=h.rotation.y;
-    await anim(300,t=>{const e=Math.sin(t*Math.PI*0.5);hp.set(p0.x+dir.x*0.7*e,0.05,p0.z+dir.z*0.7*e);if(mv.fx==='tail')h.rotation.y=r0+t*Math.PI*2;});
+    await anim(300,t=>{const e=Math.sin(t*Math.PI*0.5);hp.set(p0.x+dir.x*0.4*e,0.05,p0.z+dir.z*0.4*e);if(mv.fx==='tail')h.rotation.y=r0+t*Math.PI*2;});
     if(mv.fx==='bite')await anim(300,t=>{u.obj.userData.head.rotation.z=Math.sin(t*Math.PI*2)*0.45;});
     await impact(tp,foe);
-    await anim(250,t=>{hp.set(lerp(p0.x+dir.x*0.7,p0.x,t),0,lerp(p0.z+dir.z*0.7,p0.z,t));});h.rotation.y=r0;
+    await anim(250,t=>{hp.set(lerp(p0.x+dir.x*0.4,p0.x,t),0,lerp(p0.z+dir.z*0.4,p0.z,t));});h.rotation.y=r0;
   }else{
-    const dx=tp.x-hp.x,dz=tp.z-hp.z,l=Math.hypot(dx,dz)||1,from=new THREE.Vector3(hp.x+dx/l*0.9,u.mouth,hp.z+dz/l*0.9),to=new THREE.Vector3(tp.x-dx/l*0.5,1.1,tp.z-dz/l*0.5);
+    const dx=tp.x-hp.x,dz=tp.z-hp.z,l=Math.hypot(dx,dz)||1,from=new THREE.Vector3(hp.x+dx/l*0.5,u.mouth,hp.z+dz/l*0.5),to=new THREE.Vector3(tp.x-dx/l*0.3,0.7,tp.z-dz/l*0.3);
     await anim(160,t=>h.scale.setScalar(u.scale*(1+Math.sin(t*Math.PI)*0.2)));
-    if(mv.fx==='wave')await rings(from,to,{n:4,size:u.small?0.6:1.2,color:'#bfe8ff',dur:750});
-    if(mv.fx==='fire')await particles(from,to,{n:34,size:0.3,cols:['#ff4a1a','#ff9d2e','#ffd23f'],spread:0.9,dur:800,grow:0.6});
-    if(mv.fx==='sparks')await particles(from,to,{n:16,size:0.12,cols:['#ffd23f','#ffffff','#ff9d2e'],spread:0.6,dur:600,grav:0.6});
+    if(mv.fx==='wave')await rings(from,to,{n:4,size:u.small?0.35:0.75,color:'#bfe8ff',dur:750});
+    if(mv.fx==='fire')await particles(from,to,{n:34,size:0.18,cols:['#ff4a1a','#ff9d2e','#ffd23f'],spread:0.9,dur:800,grow:0.6});
+    if(mv.fx==='sparks')await particles(from,to,{n:16,size:0.08,cols:['#ffd23f','#ffffff','#ff9d2e'],spread:0.6,dur:600,grav:0.6});
     await impact(tp,foe);
   }
 }
 async function impact(tp,foe){
-  const p=new THREE.Vector3(tp.x,1.2,tp.z);
+  const p=new THREE.Vector3(tp.x,0.7,tp.z);
   if(foe.guard){popText(tp,'DODGED!','#7fd6ff');particles(p,p,{n:8,size:0.12,cols:['#7fd6ff'],spread:1.2,dur:400});return;}
   particles(p,p,{n:16,size:0.15,cols:['#ffffff','#ffd23f','#ff7a2f'],spread:2.2,dur:450,grav:1});await shake(foe.units);
 }
@@ -510,11 +512,11 @@ async function act(mv){
   const k=turn,f=S[k],foe=S[OTHER[k]],u=f.units[k==='chel'?selUnit:0];setMsg(CARDS[k].name+': '+mv.label+'!');
   if(mv.id==='duck'){
     f.pow-=mv.cost;
-    if(u.type==='croc'){u.sunk=true;await anim(450,t=>{u.holder.position.y=-1.15*t;});}
-    else{const z0=u.holder.position.z;await anim(700,t=>{u.holder.position.z=z0+Math.sin(t*Math.PI)*1.2*(blockedAt(u.holder.position.x,z0+1.2,BODY)?-1:1);u.holder.position.y=Math.abs(Math.sin(t*Math.PI*2))*1.1;});u.holder.position.z=z0;u.holder.position.y=0;}
+    if(u.type==='croc'){u.sunk=true;await anim(450,t=>{u.holder.position.y=-0.65*t;});}
+    else{const z0=u.holder.position.z;await anim(700,t=>{u.holder.position.z=z0+Math.sin(t*Math.PI)*0.8*(blockedAt(u.holder.position.x,z0+0.8,BODY)?-1:1);u.holder.position.y=Math.abs(Math.sin(t*Math.PI*2))*1.1;});u.holder.position.z=z0;u.holder.position.y=0;}
     f.guard=true;f.pow=Math.min(3,f.pow+1+(u.small?1:0));
   }else if(mv.id==='heal'){
-    f.pow-=mv.cost;const p=u.holder.position;await particles(new THREE.Vector3(p.x,0.2,p.z),new THREE.Vector3(p.x,3.4,p.z),{n:22,size:0.18,cols:['#7dffb0','#ffffff'],spread:2.2,dur:900});
+    f.pow-=mv.cost;const p=u.holder.position;await particles(new THREE.Vector3(p.x,0.2,p.z),new THREE.Vector3(p.x,2,p.z),{n:22,size:0.1,cols:['#7dffb0','#ffffff'],spread:2.2,dur:900});
     f.hp=Math.min(6,f.hp+2);popText(p,'+1 ♥','#2fd28a');
   }else{
     setMsg(CARDS[k].name+' moves toward '+CARDS[OTHER[k]].name+(OBS.length?', around the objects':'')+'…');
@@ -564,7 +566,7 @@ renderer.domElement.addEventListener('pointerup',e=>{if(!down)return;const dx=e.
 const clock=new THREE.Clock();
 function tick(){const t=clock.getElapsedTime();
   for(const k in S)for(const u of S[k].units)if(u.holder.visible)idle(u,t);
-  for(const k in CARDS){const c=CARDS[k],ti=k==='mark'?0:1;let x,y;if(AR&&AR.M[ti]){_v.set(0,0.1,0.03).applyMatrix4(AR.M[ti]).multiplyScalar(1/AR.sref).project(cam);x=(_v.x*.5+.5)*innerWidth;y=(-_v.y*.5+.5)*innerHeight;}else[x,y]=toScreen(c.x,0.05,c.z-0.4);tagEls[k].style.left=x+'px';tagEls[k].style.top=y+'px';}
+  for(const k in CARDS){const c=CARDS[k],ti=k==='mark'?0:1;let x,y;if(AR&&AR.M[ti]){_v.set(0,1.0,0.03).applyMatrix4(AR.M[ti]).multiplyScalar(1/AR.sref).project(cam);x=(_v.x*.5+.5)*innerWidth;y=(-_v.y*.5+.5)*innerHeight;}else[x,y]=toScreen(c.x,0.05,c.z-2.3);tagEls[k].style.left=x+'px';tagEls[k].style.top=y+'px';}
   if(AR)arFrame();else ctl.update();renderer.render(scene,cam);requestAnimationFrame(tick);}
 
 // ---------- real camera + card tracking (MindAR) ----------
@@ -587,6 +589,7 @@ async function startAR(){
     for(const k in CARDS)CARDS[k].mesh.visible=false;
     scene.matrixAutoUpdate=false;ctl.enabled=false;cam.position.set(0,0,0);cam.rotation.set(0,0,0);
     arResize();await ctrl.dummyRun(video);ctrl.processVideo(video);
+    loadHands().then(()=>loadOD()).catch(e=>console.log('preload',e));
     scanUI();setMsg('Point the camera at a card','Lay both cards flat, side by side, with about 2 card-widths between them. Keep the table above the cards in view.');
   }catch(e){AR=null;console.log(e);setMsg('Camera mode is not available here','Open the GitHub Pages link over https and allow the camera. You can still play with the scan buttons.');}
 }
@@ -606,7 +609,7 @@ function arFrame(){
     const cA=colV(t0,3),cB=colV(t1,3),n=colV(t0,2).normalize().add(colV(t1,2).normalize()).normalize();
     const ex=cB.clone().sub(cA);const d=ex.length()/AR.sref;ex.addScaledVector(n,-ex.dot(n)).normalize();
     const ez=new THREE.Vector3().crossVectors(ex,n).normalize();
-    const O=cA.clone().add(cB).multiplyScalar(0.5).addScaledVector(ez,-5*AR.sref);
+    const O=cA.clone().add(cB).multiplyScalar(0.5).addScaledVector(ez,0);
     Wp=basis(ex,n,ez,O);
     AR.rel[0]=t0.clone().invert().multiply(Wp);AR.rel[1]=t1.clone().invert().multiply(Wp);AR.haveBoth=true;AR.d=d;
   }else{
@@ -616,7 +619,7 @@ function arFrame(){
     if(AR.haveBoth)Wp=mi.clone().multiply(AR.rel[i]);
     else{
       const ex=colV(mi,0).normalize(),n=colV(mi,2).normalize(),ez=new THREE.Vector3().crossVectors(ex,n).normalize(),cx=(i===0?-1:1)*AR.d/2;
-      Wp=basis(ex,n,ez,colV(mi,3).addScaledVector(ex,-cx*AR.sref).addScaledVector(ez,-5*AR.sref));
+      Wp=basis(ex,n,ez,colV(mi,3).addScaledVector(ex,-cx*AR.sref));
     }
   }
   AR.lost=0;$('#lost').style.display='none';
@@ -640,73 +643,70 @@ function arResize(){
 async function loadHands(){
   if(AR.hands)return AR.hands;
   const m=await import('./mediapipe/vision_bundle.mjs');const fs=await m.FilesetResolver.forVisionTasks('./mediapipe/wasm');let hl=null;
-  for(const delegate of ['GPU','CPU']){try{hl=await m.HandLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:'./mediapipe/hand_landmarker.task',delegate},runningMode:'VIDEO',numHands:1});break;}catch(e){console.log('hand model',delegate,e);}}
+  for(const delegate of ['CPU','GPU']){try{hl=await m.HandLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:'./mediapipe/hand_landmarker.task',delegate},runningMode:'VIDEO',numHands:1});break;}catch(e){console.log('hand model',delegate,e);}}
   AR.hands=hl;return hl;
 }
 async function handLoop(){
-  let hl=null;try{hl=await loadHands();}catch(e){console.log('hand load failed',e);}
-  if(!hl){setMsg('Step 3 · Raise your arm between the characters','Hand detection could not load: use the button');return;}
-  const hist=[];let hold=0;
+  AR.handStatus='loading model';let hl=null;try{hl=await loadHands();}catch(e){console.log('hand load failed',e);}
+  if(!hl){AR.handStatus='model failed';setMsg('Step 3 · Raise your arm between the characters','Hand detection could not load: press the button');return;}
+  AR.handStatus='none';let hold=0,seen=0;
   while(state==='arm'&&AR){
     await sleep(100);let r;try{r=hl.detectForVideo(AR.video,performance.now());}catch(e){continue;}
     AR.handCalls=(AR.handCalls||0)+1;const L=r.landmarks&&r.landmarks[0];
-    if(!L){hold=0;hist.length=0;continue;}
-    const wr=L[0],tip=L[12],palm=L[9],now=performance.now();AR.hand={x:palm.x,y:palm.y};
-    hist.push([now,palm.y]);while(hist.length&&now-hist[0][0]>1200)hist.shift();
-    const lowest=Math.max(...hist.map(h=>h[1])),rise=lowest-palm.y,up=wr.y-tip.y;
-    if(up>0.10&&(palm.y<0.5||rise>0.12))hold++;else hold=Math.max(0,hold-1);
-    if(hold>=3){raiseArm(true);return;}
+    if(!L){hold=0;seen=0;AR.handStatus='none';continue;}
+    const wr=L[0],tip=L[12],palm=L[9],up=wr.y-tip.y;seen++;
+    AR.handStatus=up>0.05?'raised':'seen';
+    if(up>0.05&&palm.y<0.85)hold++;else hold=Math.max(0,hold-1);
+    if(hold>=3||seen>=12){raiseArm(true);return;}
   }
 }
 
-// ---------- real object detection: compare the table with how it looked at FIGHT ----------
-const DX0=-6,DZ0=-3.4,DCS=0.3,DNX=40,DNZ=20;
-const DET={cv:document.createElement('canvas'),ref:null,cnt:new Uint8Array(DNX*DNZ),timer:null,blobs:0};
-DET.cv.width=480;DET.cv.height=270;DET.ctx=DET.cv.getContext('2d',{willReadFrequently:true});
-function detSample(){
-  const v=AR.video;DET.ctx.drawImage(v,0,0,480,270);const px=DET.ctx.getImageData(0,0,480,270).data;
-  scene.updateMatrixWorld(true);cam.updateMatrixWorld(true);
-  const out=new Float32Array(DNX*DNZ*3).fill(NaN);
-  for(let i=0;i<DNX;i++)for(let j=0;j<DNZ;j++){
-    _v.set(DX0+(i+.5)*DCS,0,DZ0+(j+.5)*DCS).applyMatrix4(scene.matrixWorld).project(cam);if(_v.z>1)continue;
-    const sx=(_v.x*.5+.5)*innerWidth,sy=(-_v.y*.5+.5)*innerHeight,X=Math.round((sx-AR.vl)/AR.vw*480),Y=Math.round((sy-AR.vt)/AR.vh*270);
-    if(X<2||Y<2||X>477||Y>267)continue;
-    let r=0,g=0,b=0;for(let a=-1;a<=1;a++)for(let c=-1;c<=1;c++){const o=((Y+a)*480+X+c)*4;r+=px[o];g+=px[o+1];b+=px[o+2];}
-    const o=(i+j*DNX)*3;out[o]=r/9;out[o+1]=g/9;out[o+2]=b/9;
-  }
-  return out;
+// ---------- real object detection (MediaPipe object detector) ----------
+const DET={timer:null,pend:[],calls:0};
+async function loadOD(){
+  if(AR.od)return AR.od;const m=await import('./mediapipe/vision_bundle.mjs');const fs=await m.FilesetResolver.forVisionTasks('./mediapipe/wasm');let od=null;
+  for(const delegate of ['CPU','GPU']){try{od=await m.ObjectDetector.createFromOptions(fs,{baseOptions:{modelAssetPath:'./mediapipe/object_detector.tflite',delegate},runningMode:'VIDEO',scoreThreshold:0.3,maxResults:8});break;}catch(e){console.log('object model',delegate,e);}}
+  AR.od=od;return od;
 }
-function detRebase(){if(!AR)return;DET.ref=detSample();DET.cnt.fill(0);clearRealObstacles();if(!DET.timer)DET.timer=setInterval(detStep,350);}
-function clearRealObstacles(){for(const o of OBS.slice())if(o.kind==='real')dropObstacle(o);}
-function detStep(){
-  if(!AR||state!=='fight'||!DET.ref)return;
-  const cur=detSample(),ref=DET.ref,ratios=[];
-  for(let c=0;c<DNX*DNZ;c++){const o=c*3;if(isNaN(cur[o])||isNaN(ref[o]))continue;const a=cur[o]+cur[o+1]+cur[o+2],b=ref[o]+ref[o+1]+ref[o+2];if(b>30)ratios.push(a/b);}
-  if(ratios.length<60)return;ratios.sort((a,b)=>a-b);const gain=clamp(ratios[ratios.length>>1],0.6,1.6);
-  const active=new Uint8Array(DNX*DNZ);
-  for(let c=0;c<DNX*DNZ;c++){const o=c*3;if(isNaN(cur[o])||isNaN(ref[o])){DET.cnt[c]=0;continue;}
-    const dr=cur[o]/gain-ref[o],dg=cur[o+1]/gain-ref[o+1],db=cur[o+2]/gain-ref[o+2],d=Math.max(Math.abs(dr),Math.abs(dg),Math.abs(db));
-    if(d>42)DET.cnt[c]=Math.min(255,DET.cnt[c]+1);else{DET.cnt[c]=0;ref[o]+=dr*0.04;ref[o+1]+=dg*0.04;ref[o+2]+=db*0.04;}
-    if(DET.cnt[c]>=4)active[c]=1;}
-  const seen=new Uint8Array(DNX*DNZ),blobs=[];
-  for(let c=0;c<DNX*DNZ;c++){if(!active[c]||seen[c])continue;const stack=[c],cells=[];seen[c]=1;
-    while(stack.length){const q=stack.pop();cells.push(q);const qi=q%DNX,qj=(q/DNX)|0;for(const [a,b] of [[1,0],[-1,0],[0,1],[0,-1]]){const ni=qi+a,nj=qj+b;if(ni<0||nj<0||ni>=DNX||nj>=DNZ)continue;const n=ni+nj*DNX;if(active[n]&&!seen[n]){seen[n]=1;stack.push(n);}}}
-    if(cells.length<3)continue;
-    let sx=0,sz=0,R=0,G=0,B=0;for(const q of cells){sx+=DX0+((q%DNX)+.5)*DCS;sz+=DZ0+(((q/DNX)|0)+.5)*DCS;R+=cur[q*3];G+=cur[q*3+1];B+=cur[q*3+2];}
-    const n=cells.length,cx=sx/n,cz=sz/n;R/=n;G/=n;B/=n;
-    if(R>110&&R>G*1.1&&G>B*1.05&&R-B>35)continue; // skin colour: treat as a hand, not an object
-    let rad=0;for(const q of cells)rad=Math.max(rad,Math.hypot(DX0+((q%DNX)+.5)*DCS-cx,DZ0+(((q/DNX)|0)+.5)*DCS-cz));
-    blobs.push({x:cx,z:cz,r:clamp(rad+DCS*0.7,0.4,2.0)});
+function pixToTable(X,Y){
+  const sx=AR.vl+X/AR.video.videoWidth*AR.vw,sy=AR.vt+Y/AR.video.videoHeight*AR.vh;
+  mp.set(sx/innerWidth*2-1,-(sy/innerHeight)*2+1);ray.setFromCamera(mp,cam);const h=ray.intersectObject(floor)[0];
+  return h?scene.worldToLocal(h.point.clone()):null;
+}
+function detRebase(){
+  if(!AR||DET.timer)return;
+  loadOD().then(od=>{if(!od||!AR||DET.timer)return;DET.timer=setInterval(()=>detStep(od),300);}).catch(e=>console.log('object detector',e));
+}
+function detStep(od){
+  if(!AR||state!=='fight'||AR.lost>5||!AR.M[0]&&!AR.M[1])return;
+  let r;try{r=od.detectForVideo(AR.video,performance.now());}catch(e){return;}
+  DET.calls++;scene.updateMatrixWorld(true);cam.updateMatrixWorld(true);
+  const found=[];
+  for(const d of r.detections||[]){
+    const c=d.categories[0],bb=d.boundingBox;if(!c||c.score<0.35||c.categoryName==='person'||!bb)continue;
+    const yb=bb.originY+bb.height*0.92,pc=pixToTable(bb.originX+bb.width*0.5,yb);if(!pc)continue;
+    const pl=pixToTable(bb.originX+bb.width*0.1,yb),pr=pixToTable(bb.originX+bb.width*0.9,yb);
+    if(Math.abs(pc.x)>AX()+1||Math.abs(pc.z)>AZ+1)continue;
+    if(Math.abs(Math.abs(pc.x)-Math.abs(CARDS.chel.x))<1.3&&Math.abs(pc.z)<2.2)continue; // the cards themselves
+    found.push({x:pc.x,z:pc.z,r:clamp(pl&&pr?Math.hypot(pl.x-pr.x,pl.z-pr.z)/2:0.5,0.35,1.1),label:c.categoryName});
   }
-  DET.blobs=blobs.length;
+  DET.last=found.map(f=>f.label).join(',');
   const real=OBS.filter(o=>o.kind==='real'),used=new Set();
-  for(const b of blobs){let best=null,bd=1.1;for(const o of real){if(used.has(o))continue;const d=Math.hypot(o.x-b.x,o.z-b.z);if(d<bd){bd=d;best=o;}}
-    if(best){used.add(best);best.x=lerp(best.x,b.x,0.5);best.z=lerp(best.z,b.z,0.5);best.r=lerp(best.r,b.r,0.5);best.miss=0;best.mesh.position.set(best.x,0,best.z);best.mesh.scale.set(best.r,1,best.r);}
-    else if(OBS.length<8){used.add(addObstacle(b.x,b.z,b.r,'real'));}}
-  for(const o of real)if(!used.has(o)&&++o.miss>=6)dropObstacle(o);
+  for(const f of found){
+    let best=null,bd=0.9;for(const o of real){if(used.has(o))continue;const dd=Math.hypot(o.x-f.x,o.z-f.z);if(dd<bd){bd=dd;best=o;}}
+    if(best){used.add(best);best.x=lerp(best.x,f.x,0.4);best.z=lerp(best.z,f.z,0.4);best.r=lerp(best.r,f.r,0.3);best.miss=0;best.mesh.position.set(best.x,0,best.z);best.mesh.scale.set(best.r,1,best.r);}
+    else{const pe=DET.pend.find(q=>Math.hypot(q.x-f.x,q.z-f.z)<0.9);
+      if(pe){pe.x=f.x;pe.z=f.z;pe.age=0;if(++pe.n>=2){DET.pend.splice(DET.pend.indexOf(pe),1);if(OBS.length<8)used.add(addObstacle(f.x,f.z,f.r,'real',f.label));}}
+      else DET.pend.push({x:f.x,z:f.z,n:1,age:0});}
+  }
+  for(const o of real)if(!used.has(o)&&++o.miss>=8)dropObstacle(o);
+  DET.pend=DET.pend.filter(q=>++q.age<4);
 }
+// small on-screen status line so we can see what the phone is detecting
+setInterval(()=>{const d=$('#hud');if(!AR){d.style.display='none';return;}d.style.display='block';
+  d.textContent='Mark '+(AR.M[0]?'✓':'–')+'  Chelsea '+(AR.M[1]?'✓':'–')+'  ·  hand: '+(AR.handStatus||'…')+'  ·  objects: '+OBS.filter(o=>o.kind==='real').length+(AR.od?'':' (loading model)')+(DET.last?' ['+DET.last+']':'');},400);
 
 reset();tick();
-window.__game={DET,OBS,detRebase,detSample,get AR(){return AR},findPath,addObstacle,scan,act,get S(){return S},get state(){return state},get turn(){return turn},raiseArm,moveDefs,get busy(){return busy}};
+window.__game={DET,OBS,detRebase,get AR(){return AR},findPath,addObstacle,scan,act,get S(){return S},get state(){return state},get turn(){return turn},raiseArm,moveDefs,get busy(){return busy}};
 </script>
 </body></html>

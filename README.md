@@ -13,4 +13,4 @@ Open the GitHub Pages link over https in Safari, press "Use my camera", and allo
 - Lay the two cards flat on a table, side by side, with about two card-widths between them. Keep the table above the cards in view and clear of objects.
 - Cards are found with MindAR image tracking and scan automatically.
 - Raise your hand between the characters (MediaPipe hand landmarks) to start the fight. The on-screen button is a fallback.
-- The fight is automatic. After FIGHT, anything new you put on the table is picked up (the table is compared with how it looked at FIGHT, in a top-down view locked to the cards), and the characters path-find around it. Remove it and they walk straight again.
+- The fight is automatic and happens between the two cards. Everyday objects you put on the table (cups, bottles, books, phones, toys and so on, 80 common kinds, from a MediaPipe object detector) are picked up and the characters path-find around them. A status line at the bottom shows which cards, hand and objects are currently detected.
