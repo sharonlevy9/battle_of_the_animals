@@ -507,6 +507,14 @@ async function impact(tp,foe){
   if(foe.guard){popText(tp,'DODGED!','#7fd6ff');particles(p,p,{n:8,size:0.12,cols:['#7fd6ff'],spread:1.2,dur:400});return;}
   particles(p,p,{n:16,size:0.15,cols:['#ffffff','#ffd23f','#ff7a2f'],spread:2.2,dur:450,grav:1});await shake(foe.units);
 }
+async function returnHome(u){
+  const p=u.holder.position,hx=u.home[0],hz=u.home[1];
+  if(Math.hypot(p.x-hx,p.z-hz)>0.12){
+    setMsg(CARDS[turn].name+' goes back to its card');
+    await walkPath(u,findPath(p.x,p.z,hx,hz,BODY)||[[p.x,p.z],[hx,hz]],u.small?3:2.2);
+  }
+  await turnTo(u,u.type==='croc'?1:-1,u.type==='croc'?0:0.7,300);
+}
 async function act(mv){
   if(busy||state!=='fight')return;busy=true;
   const k=turn,f=S[k],foe=S[OTHER[k]],u=f.units[k==='chel'?selUnit:0];setMsg(CARDS[k].name+': '+mv.label+'!');
@@ -530,6 +538,7 @@ async function act(mv){
     }
   }
   refreshTags();
+  if(foe.hp>0&&state==='fight')await returnHome(u);
   if(foe.hp<=0){busy=false;await ko(foe,f,OTHER[k],k);return;}
   turn=OTHER[k];busy=false;
 }
