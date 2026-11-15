@@ -281,9 +281,9 @@ let S,order,state,turn,busy,selUnit,obstacle;
 const OTHER={mark:'chel',chel:'mark'};
 function reset(){
   if(S)for(const k in S)S[k].units.forEach(u=>scene.remove(u.holder));
-  if(obstacle){scene.remove(obstacle.m);}
+  clearObstacles();loopTok++;if(DET.timer){clearInterval(DET.timer);DET.timer=null;}
   S={mark:{scanned:false,hp:6,pow:0,guard:false,units:[]},chel:{scanned:false,hp:6,pow:0,guard:false,units:[]}};
-  order=[];state='scan';turn=null;busy=false;selUnit=0;obstacle=null;ctl.enabled=!AR;
+  order=[];state='scan';turn=null;busy=false;selUnit=0;ctl.enabled=!AR;
   drawCard('mark',false);drawCard('chel',false);refreshTags();scanUI();
 }
 function setMsg(a,b){$('#msg').innerHTML=a+(b?'<small>'+b+'</small>':'');}
@@ -340,14 +340,16 @@ async function scare(){
   await Promise.all([...A.units,...B.units].map(async u=>{await walkTo(u,u.home[0],u.home[1],1300);await turnTo(u,u.type==='croc'?1:-1,u.type==='croc'?0:0.7,350);}));
   state='arm';busy=false;ctl.enabled=false;refreshTags();
   setMsg('Step 3 · Raise your arm between the characters','Swipe up on the screen, or press the button');
-  clearBar();btn('✋ Raise arm',raiseArm,{cls:'main'});
+  clearBar();btn('✋ Raise arm',()=>raiseArm(),{cls:'main'});
+  if(AR){setMsg('Step 3 · Raise your hand between the characters','Keep the table clear until FIGHT appears. Or press the button.');handLoop();}
 }
 
 // ---------- arm + FIGHT (step 3) ----------
 function buildArm(){const p=Part(),skin='#e9b08b',sl='#2a6ea0';box(p,-2,2,0,6,-1,1,sl);box(p,-2,2,7,12,-1,1,skin);box(p,-3,3,13,16,-1,1,skin);
   for(const x of [-3,-1,1,3])box(p,x,x,17,20,-1,1,skin);box(p,-5,-4,13,16,-1,1,skin);const g=mesh(p);g.scale.setScalar(0.14);return g;}
-async function raiseArm(){
+async function raiseArm(real){
   if(state!=='arm'||busy)return;busy=true;state='armUp';clearBar();setMsg('');
+  if(real===true){const f=$('#fight');f.classList.remove('go');void f.offsetWidth;f.classList.add('go');await sleep(1700);startFight();return;}
   const arm=buildArm();const w=new THREE.Group();w.add(arm);w.position.set(0,-3.4,2.2);scene.add(w);
   await anim(700,t=>{w.position.y=-3.4+3.4*(1-Math.pow(1-t,3));});
   await anim(350,t=>{w.rotation.z=-0.5*Math.sin(t*Math.PI*2)*0.9;});
@@ -357,30 +359,114 @@ async function raiseArm(){
   await sleep(500);startFight();
 }
 
-// ---------- fight (steps 4-5) ----------
-function startFight(){state='fight';turn=order[0];busy=false;ctl.enabled=!AR;beginTurn(true);}
+// ---------- fight (steps 4-5): automatic, with obstacle avoidance ----------
+let loopTok=0;
+function startFight(){state='fight';turn=order[0];busy=false;ctl.enabled=!AR;clearBar();if(AR)detRebase();fightLoop(++loopTok);}
+async function fightLoop(tok){
+  let first=true;
+  while(state==='fight'&&tok===loopTok){
+    await beginTurn(first);first=false;
+    if(state!=='fight'||tok!==loopTok)break;
+    await sleep(450);
+    await act(aiPick());
+    await sleep(250);
+  }
+}
 async function beginTurn(first){
   const f=S[turn];if(!first)f.pow=Math.min(3,f.pow+1);
   if(f.guard){f.guard=false;for(const u of f.units)if(u.sunk){u.sunk=false;await anim(350,t=>{u.holder.position.y=-1.15*(1-t);});}}
-  selUnit=0;refreshTags();turnUI();
+  selUnit=0;refreshTags();
+  setMsg('Player '+(order.indexOf(turn)+1)+' · '+CARDS[turn].name+'’s turn',OBS.length?'Objects on the table: the fighters go around them':'Put an object on the table, they will walk around it');
 }
 function moveDefs(k,unit){
   if(k==='mark')return[{id:'normal',label:'Bite',cost:0,dmg:1,fx:'bite'},{id:'special',label:'Tail hit',cost:3,dmg:2,fx:'tail'},{id:'duck',label:'Dive',cost:0},{id:'heal',label:'Heal',cost:2}];
   if(unit===0)return[{id:'normal',label:'Sound waves',cost:0,dmg:1,fx:'wave'},{id:'special',label:'Fire blow',cost:3,dmg:2,fx:'fire'},{id:'duck',label:'Run & jump',cost:0}];
   return[{id:'normal',label:'Small waves',cost:0,dmg:1,fx:'wave'},{id:'special',label:'Sparks',cost:1,dmg:1,fx:'sparks'},{id:'duck',label:'Quick dodge',cost:0}];
 }
-function turnUI(){
-  clearBar();const k=turn,f=S[k];const pn=order.indexOf(k)+1;
-  setMsg('Player '+pn+' · '+CARDS[k].name+'’s turn',obstacle?'Object on the table: attacks may miss':'Tap the table to drop an object between them');
-  if(k==='chel'){btn('Big Chelsea',()=>{selUnit=0;turnUI();},{cls:selUnit===0?'sel':''});btn('Little fox',()=>{selUnit=1;turnUI();},{cls:selUnit===1?'sel':''});}
-  for(const mv of moveDefs(k,selUnit))btn(mv.label,()=>act(mv),{dis:f.pow<mv.cost,sub:mv.id==='duck'?'dodge next hit +power':mv.id==='heal'?'+1 heart · needs 2':mv.cost?'needs '+mv.cost+' power':(mv.dmg?'½ heart':'')});
-  btn('Drop object',()=>placeObstacle(lerp(-1,1,Math.random()),0.3));
+function aiPick(){
+  const k=turn,f=S[k],foe=S[OTHER[k]];
+  if(k==='chel')selUnit=(f.pow>=3||Math.random()<0.45)?0:1;
+  const defs=moveDefs(k,selUnit),by=id=>defs.find(d=>d.id===id);
+  const r=Math.random();
+  if(by('heal')&&f.hp<=3&&f.pow>=2&&r<0.75)return by('heal');
+  if(f.pow>=by('special').cost&&r<0.8)return by('special');
+  if(!f.guard&&foe.pow>=3&&r<0.35)return by('duck');
+  return r<0.12?by('duck'):by('normal');
 }
-function removeObstacle(){if(!obstacle)return;const o=obstacle;obstacle=null;anim(300,t=>o.m.scale.setScalar(1-t)).then(()=>scene.remove(o.m));}
-function placeObstacle(x,z){
-  if(state!=='fight'||busy)return;removeObstacle();x=clamp(x,-1.6,1.6);z=clamp(z,-1.2,2);
-  const m=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.9,0.9),new THREE.MeshLambertMaterial({color:['#7b8cff','#ffb84d','#6fd6a8'][Math.floor(Math.random()*3)]}));m.castShadow=true;scene.add(m);obstacle={m,turns:2,x,z};
-  anim(500,t=>{m.position.set(x,0.45+(1-t)*4*Math.abs(Math.cos(t*Math.PI*1.5)),z);});popText(new THREE.Vector3(x,0,z),'Object!','#ffd23f');if(state==='fight')turnUI();
+
+// ----- obstacles (real objects from the camera, or taps) -----
+const OBS=[];
+function makeObsMesh(kind,r){
+  const g=new THREE.Group();
+  if(kind==='virtual'){const m=new THREE.Mesh(new THREE.BoxGeometry(1.3,1.1,1.3),new THREE.MeshLambertMaterial({color:['#7b8cff','#ffb84d','#6fd6a8'][Math.floor(Math.random()*3)]}));m.position.y=0.55;m.castShadow=true;g.add(m);}
+  else{const ring=new THREE.Mesh(new THREE.TorusGeometry(1,0.06,6,28),new THREE.MeshBasicMaterial({color:'#5be3ff'}));ring.rotation.x=Math.PI/2;ring.position.y=0.05;g.add(ring);
+    const cyl=new THREE.Mesh(new THREE.CylinderGeometry(1,1,1.2,20,1,true),new THREE.MeshBasicMaterial({color:'#5be3ff',transparent:true,opacity:0.18,side:THREE.DoubleSide}));cyl.position.y=0.6;g.add(cyl);g.userData.scaled=true;}
+  scene.add(g);return g;
+}
+function addObstacle(x,z,r,kind){
+  const o={x,z,r,kind,miss:0,mesh:makeObsMesh(kind,r)};o.mesh.position.set(x,0,z);if(o.mesh.userData.scaled)o.mesh.scale.set(r,1,r);
+  OBS.push(o);anim(400,t=>{o.mesh.position.y=(1-t)*(1-t)*2.5;});popText(new THREE.Vector3(x,0,z),kind==='real'?'Object detected':'Object!','#5be3ff');return o;
+}
+function dropObstacle(o){const i=OBS.indexOf(o);if(i>=0)OBS.splice(i,1);anim(300,t=>o.mesh.scale.multiplyScalar(0.8)).then(()=>scene.remove(o.mesh));}
+function clearObstacles(){while(OBS.length)dropObstacle(OBS[0]);}
+function placeObstacle(x,z){if(state!=='fight')return;x=clamp(x,-5.5,5.5);z=clamp(z,-3,2.8);addObstacle(x,z,0.75,'virtual');}
+
+// ----- path finding on a grid around obstacles -----
+const GX0=-8,GZ0=-3.8,CS=0.25,NX=64,NZ=32;
+const cellOf=(x,z)=>[clamp(Math.floor((x-GX0)/CS),0,NX-1),clamp(Math.floor((z-GZ0)/CS),0,NZ-1)];
+function buildGrid(margin){const g=new Uint8Array(NX*NZ);for(let i=0;i<NX;i++)for(let j=0;j<NZ;j++){const x=GX0+(i+.5)*CS,z=GZ0+(j+.5)*CS;for(const o of OBS)if(Math.hypot(x-o.x,z-o.z)<o.r+margin){g[i+j*NX]=1;break;}}return g;}
+function gridLos(g,a,b){const d=Math.hypot(b[0]-a[0],b[1]-a[1]),n=Math.ceil(d/(CS*0.5));for(let k=0;k<=n;k++){const t=k/n,[i,j]=cellOf(lerp(a[0],b[0],t),lerp(a[1],b[1],t));if(g[i+j*NX])return false;}return true;}
+function findPath(sx,sz,ex,ez,margin){
+  const g=buildGrid(margin),[si,sj]=cellOf(sx,sz),[ei,ej]=cellOf(ex,ez);
+  for(let a=-3;a<=3;a++)for(let b=-3;b<=3;b++){const i=si+a,j=sj+b;if(i>=0&&j>=0&&i<NX&&j<NZ)g[i+j*NX]=0;}
+  const s=si+sj*NX,e=ei+ej*NX;if(g[e])return null;
+  const G=new Float32Array(NX*NZ).fill(1e9),F=new Float32Array(NX*NZ),from=new Int32Array(NX*NZ).fill(-1),closed=new Uint8Array(NX*NZ);
+  const open=[s];G[s]=0;F[s]=Math.hypot(ei-si,ej-sj);let found=s===e;
+  while(open.length&&!found){
+    let bi=0;for(let k=1;k<open.length;k++)if(F[open[k]]<F[open[bi]])bi=k;
+    const cur=open.splice(bi,1)[0];if(cur===e){found=true;break;}closed[cur]=1;const ci=cur%NX,cj=(cur/NX)|0;
+    for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++){if(!dx&&!dy)continue;const ni=ci+dx,nj=cj+dy;if(ni<0||nj<0||ni>=NX||nj>=NZ)continue;const n=ni+nj*NX;if(g[n]||closed[n])continue;
+      if(dx&&dy&&(g[ci+dx+cj*NX]||g[ci+(cj+dy)*NX]))continue;
+      const c=G[cur]+(dx&&dy?1.414:1);if(c<G[n]){G[n]=c;from[n]=cur;F[n]=c+Math.hypot(ei-ni,ej-nj);if(!open.includes(n))open.push(n);}}
+  }
+  if(!found)return null;
+  const cells=[];for(let c=e;c!==-1;c=from[c])cells.push([GX0+((c%NX)+.5)*CS,GZ0+(((c/NX)|0)+.5)*CS]);cells.reverse();
+  const pts=[[sx,sz],...cells.slice(1,-1),[ex,ez]],out=[pts[0]];let i=0;
+  while(i<pts.length-1){let j=pts.length-1;while(j>i+1&&!gridLos(g,pts[i],pts[j]))j--;out.push(pts[j]);i=j;}
+  return out;
+}
+function losClear(ax,az,bx,bz,margin=0.35){for(const o of OBS){if(Math.hypot(ax-o.x,az-o.z)<o.r+0.2||Math.hypot(bx-o.x,bz-o.z)<o.r+0.2)continue;const dx=bx-ax,dz=bz-az,l2=dx*dx+dz*dz||1;const t=clamp(((o.x-ax)*dx+(o.z-az)*dz)/l2,0,1);if(Math.hypot(ax+dx*t-o.x,az+dz*t-o.z)<o.r+margin)return false;}return true;}
+function blockedAt(x,z,margin){for(const o of OBS)if(Math.hypot(x-o.x,z-o.z)<o.r+margin)return true;return false;}
+const BODY=0.95;
+async function walkPath(u,pts,speed,tries=3){
+  const h=u.holder;
+  for(let k=1;k<pts.length;k++){
+    const [tx,tz]=pts[k],p=h.position;
+    if(!losClear(p.x,p.z,tx,tz,BODY*0.8)&&tries>0){const np=findPath(p.x,p.z,pts[pts.length-1][0],pts[pts.length-1][1],BODY);if(np)return walkPath(u,np,speed,tries-1);}
+    const x0=p.x,z0=p.z,dx=tx-x0,dz=tz-z0,d=Math.hypot(dx,dz);if(d<0.02)continue;
+    const tg=headingFor(u,dx,dz),r0=h.rotation.y,ms=d/speed*1000;
+    await anim(ms,t=>{h.rotation.y=r0+angDiff(r0,tg)*Math.min(1,t*ms/180);p.x=x0+dx*t;p.z=z0+dz*t;p.y=u.sunk?p.y:Math.abs(Math.sin(t*ms/130))*0.14;});
+  }
+  if(!u.sunk)h.position.y=0;return true;
+}
+// Move unit so it can hit the target: close enough for melee, or a clear line for ranged.
+async function escapeObstacle(u){
+  const p=u.holder.position;if(!blockedAt(p.x,p.z,0.5))return;let best=null;
+  for(let r=0.5;r<4&&!best;r+=0.5)for(let a=0;a<360;a+=20){const x=p.x+Math.cos(a*Math.PI/180)*r,z=p.z+Math.sin(a*Math.PI/180)*r;if(x<-6.5||x>6.5||z<-3.2||z>3.2)continue;if(!blockedAt(x,z,BODY)){best=[x,z];break;}}
+  if(best)await walkPath(u,[[p.x,p.z],best],3.5,0);
+}
+async function approach(u,mv,foe){
+  await escapeObstacle(u);
+  const tp=foe.units[0].holder.position,p=u.holder.position,melee=mv.fx==='bite'||mv.fx==='tail';
+  const R=melee?(u.type==='croc'?2.7:1.5):5,maxR=melee?R+0.3:8.5;
+  const dist=Math.hypot(tp.x-p.x,tp.z-p.z);
+  if(dist<=maxR&&(!melee||dist>=R-0.6)&&losClear(p.x,p.z,tp.x,tp.z)){await turnTo(u,tp.x-p.x,tp.z-p.z,250);return true;}
+  const cands=[];
+  for(const rr of melee?[R]:[3.5,4.5,5.5,6.5])for(let a=0;a<360;a+=12){const x=tp.x+Math.cos(a*Math.PI/180)*rr,z=tp.z+Math.sin(a*Math.PI/180)*rr;
+    if(x<-6.5||x>6.5||z<-3.2||z>3.2)continue;if(blockedAt(x,z,BODY*0.7)||!losClear(x,z,tp.x,tp.z))continue;cands.push([x,z,Math.hypot(x-p.x,z-p.z)]);}
+  cands.sort((a,b)=>a[2]-b[2]);
+  for(const c of cands.slice(0,8)){const path=findPath(p.x,p.z,c[0],c[1],BODY);if(path){await walkPath(u,path,u.small?4.2:3.2);await turnTo(u,tp.x-u.holder.position.x,tp.z-u.holder.position.z,250);return true;}}
+  return false;
 }
 const boxGeo=new THREE.BoxGeometry(1,1,1);
 async function particles(from,to,{n,size,cols,spread,dur,grav=0,grow=0}){
@@ -389,31 +475,27 @@ async function particles(from,to,{n,size,cols,spread,dur,grav=0,grow=0}){
   for(const q of ps){fxGroup.remove(q.m);q.m.material.dispose();}
 }
 async function rings(from,to,{n,size,color,dur}){
-  const g=new THREE.TorusGeometry(0.45,0.07,6,18),ms=[];for(let i=0;i<n;i++){const m=new THREE.Mesh(g,new THREE.MeshBasicMaterial({color,transparent:true}));m.rotation.y=Math.PI/2;fxGroup.add(m);ms.push(m);}
+  const g=new THREE.TorusGeometry(0.45,0.07,6,18),ms=[];const ang=Math.atan2(to.x-from.x,to.z-from.z);
+  for(let i=0;i<n;i++){const m=new THREE.Mesh(g,new THREE.MeshBasicMaterial({color,transparent:true}));m.rotation.y=ang;fxGroup.add(m);ms.push(m);}
   await anim(dur,t=>{ms.forEach((m,i)=>{const tt=clamp((t-i*0.18)/(1-i*0.18),0,1);m.visible=tt>0&&tt<1;m.position.set(lerp(from.x,to.x,tt),lerp(from.y,to.y,tt),lerp(from.z,to.z,tt));m.scale.setScalar(size*(0.5+tt*1.3));m.material.opacity=1-tt*0.6;});});
   ms.forEach(m=>{fxGroup.remove(m);m.material.dispose();});
 }
 async function shake(units){const base=units.map(u=>u.holder.position.clone());await anim(380,t=>units.forEach((u,i)=>{u.holder.position.set(base[i].x+Math.sin(t*50)*0.16*(1-t),u.sunk?base[i].y:Math.sin(t*Math.PI)*0.35,base[i].z);}));units.forEach((u,i)=>u.holder.position.copy(base[i]));}
-async function melee(u,tgt,stop,detour,spin){
-  const h=u.holder,p0=h.position.clone(),tp=tgt.holder.position,dir=new THREE.Vector3().subVectors(p0,tp).setY(0).normalize(),p1=tp.clone().addScaledVector(dir,stop);p1.y=0;const r0=h.rotation.y;
-  await anim(520,t=>{const e=t*t*(3-2*t);h.position.set(lerp(p0.x,p1.x,e),Math.abs(Math.sin(t*14))*0.1,lerp(p0.z,p1.z,e)+(detour?Math.sin(t*Math.PI)*1.7:0));if(spin)h.rotation.y=r0+e*Math.PI*2;});
-  return {p0,r0};
-}
-async function meleeBack(u,p0,r0,detour){const h=u.holder,p1=h.position.clone();await anim(450,t=>{const e=t*t*(3-2*t);h.position.set(lerp(p1.x,p0.x,e),Math.abs(Math.sin(t*10))*0.08,lerp(p1.z,p0.z,e)+(detour?Math.sin(t*Math.PI)*1.7:0));h.rotation.y=r0;});h.position.copy(p0);}
-async function attackAnim(u,mv,foe,miss){
-  const tgt=foe.units[0],det=!!obstacle,tp=tgt.holder.position,hp=u.holder.position;
+async function attackAnim(u,mv,foe){
+  const tgt=foe.units[0],tp=tgt.holder.position,hp=u.holder.position,h=u.holder;
   if(mv.fx==='bite'||mv.fx==='tail'){
-    const {p0,r0}=await melee(u,tgt,2.7,det,mv.fx==='tail');
+    const dir=new THREE.Vector3(tp.x-hp.x,0,tp.z-hp.z).normalize(),p0=hp.clone(),r0=h.rotation.y;
+    await anim(300,t=>{const e=Math.sin(t*Math.PI*0.5);hp.set(p0.x+dir.x*0.7*e,0.05,p0.z+dir.z*0.7*e);if(mv.fx==='tail')h.rotation.y=r0+t*Math.PI*2;});
     if(mv.fx==='bite')await anim(300,t=>{u.obj.userData.head.rotation.z=Math.sin(t*Math.PI*2)*0.45;});
-    if(!miss)await impact(tp,foe);
-    await meleeBack(u,p0,r0,det);
+    await impact(tp,foe);
+    await anim(250,t=>{hp.set(lerp(p0.x+dir.x*0.7,p0.x,t),0,lerp(p0.z+dir.z*0.7,p0.z,t));});h.rotation.y=r0;
   }else{
-    const dir=Math.sign(tp.x-hp.x)||1,from=new THREE.Vector3(hp.x+dir*0.9,u.mouth,hp.z),to=new THREE.Vector3(tp.x-dir*0.5,1.1,tp.z+(det&&!miss?0:0));
-    await anim(160,t=>u.holder.scale.setScalar(u.scale*(1+Math.sin(t*Math.PI)*0.2)));
+    const dx=tp.x-hp.x,dz=tp.z-hp.z,l=Math.hypot(dx,dz)||1,from=new THREE.Vector3(hp.x+dx/l*0.9,u.mouth,hp.z+dz/l*0.9),to=new THREE.Vector3(tp.x-dx/l*0.5,1.1,tp.z-dz/l*0.5);
+    await anim(160,t=>h.scale.setScalar(u.scale*(1+Math.sin(t*Math.PI)*0.2)));
     if(mv.fx==='wave')await rings(from,to,{n:4,size:u.small?0.6:1.2,color:'#bfe8ff',dur:750});
     if(mv.fx==='fire')await particles(from,to,{n:34,size:0.3,cols:['#ff4a1a','#ff9d2e','#ffd23f'],spread:0.9,dur:800,grow:0.6});
     if(mv.fx==='sparks')await particles(from,to,{n:16,size:0.12,cols:['#ffd23f','#ffffff','#ff9d2e'],spread:0.6,dur:600,grav:0.6});
-    if(!miss)await impact(tp,foe);
+    await impact(tp,foe);
   }
 }
 async function impact(tp,foe){
@@ -422,27 +504,30 @@ async function impact(tp,foe){
   particles(p,p,{n:16,size:0.15,cols:['#ffffff','#ffd23f','#ff7a2f'],spread:2.2,dur:450,grav:1});await shake(foe.units);
 }
 async function act(mv){
-  if(busy||state!=='fight')return;busy=true;clearBar();
-  const k=turn,f=S[k],foe=S[OTHER[k]],u=f.units[k==='chel'?selUnit:0];f.pow-=mv.cost;refreshTags();setMsg(CARDS[k].name+': '+mv.label+'!');
+  if(busy||state!=='fight')return;busy=true;
+  const k=turn,f=S[k],foe=S[OTHER[k]],u=f.units[k==='chel'?selUnit:0];setMsg(CARDS[k].name+': '+mv.label+'!');
   if(mv.id==='duck'){
+    f.pow-=mv.cost;
     if(u.type==='croc'){u.sunk=true;await anim(450,t=>{u.holder.position.y=-1.15*t;});}
-    else await anim(700,t=>{u.holder.position.z=u.home[1]+(u.small?1.5-1.5:0)+Math.sin(t*Math.PI)*1.6;u.holder.position.y=Math.abs(Math.sin(t*Math.PI*2))*1.1;});
-    u.holder.position.z=u.home[1];f.guard=true;f.pow=Math.min(3,f.pow+1+(u.small?1:0));
+    else{const z0=u.holder.position.z;await anim(700,t=>{u.holder.position.z=z0+Math.sin(t*Math.PI)*1.2*(blockedAt(u.holder.position.x,z0+1.2,BODY)?-1:1);u.holder.position.y=Math.abs(Math.sin(t*Math.PI*2))*1.1;});u.holder.position.z=z0;u.holder.position.y=0;}
+    f.guard=true;f.pow=Math.min(3,f.pow+1+(u.small?1:0));
   }else if(mv.id==='heal'){
-    const p=u.holder.position;await particles(new THREE.Vector3(p.x,0.2,p.z),new THREE.Vector3(p.x,3.4,p.z),{n:22,size:0.18,cols:['#7dffb0','#ffffff'],spread:2.2,dur:900});
+    f.pow-=mv.cost;const p=u.holder.position;await particles(new THREE.Vector3(p.x,0.2,p.z),new THREE.Vector3(p.x,3.4,p.z),{n:22,size:0.18,cols:['#7dffb0','#ffffff'],spread:2.2,dur:900});
     f.hp=Math.min(6,f.hp+2);popText(p,'+1 ♥','#2fd28a');
   }else{
-    const miss=obstacle&&Math.random()<0.4;
-    const hpBefore=foe.hp,guarded=foe.guard;
-    await attackAnim(u,mv,foe,miss);
-    if(miss)popText(centerOf(foe),'Blocked by object!','#ffd23f');
-    else if(!guarded){foe.hp=Math.max(0,foe.hp-mv.dmg);popText(centerOf(foe),'-'+(mv.dmg===2?'1':'½')+' ♥','#ff4a5a');}
-    else foe.guard=false;
-    if(obstacle&&--obstacle.turns<=0)removeObstacle();
+    setMsg(CARDS[k].name+' moves toward '+CARDS[OTHER[k]].name+(OBS.length?', around the objects':'')+'…');
+    const ok=await approach(u,mv,foe);
+    if(!ok||state!=='fight'){popText(u.holder.position,'No way through!','#ffd23f');}
+    else{
+      f.pow-=mv.cost;setMsg(CARDS[k].name+': '+mv.label+'!');refreshTags();
+      const guarded=foe.guard;
+      await attackAnim(u,mv,foe);
+      if(!guarded){foe.hp=Math.max(0,foe.hp-mv.dmg);popText(centerOf(foe),'-'+(mv.dmg===2?'1':'½')+' ♥','#ff4a5a');}else foe.guard=false;
+    }
   }
   refreshTags();
-  if(foe.hp<=0){await ko(foe,f,OTHER[k],k);return;}
-  turn=OTHER[k];state='fight';busy=false;await beginTurn(false);
+  if(foe.hp<=0){busy=false;await ko(foe,f,OTHER[k],k);return;}
+  turn=OTHER[k];busy=false;
 }
 
 // ---------- KO (step 6) ----------
@@ -470,7 +555,7 @@ renderer.domElement.addEventListener('pointerup',e=>{if(!down)return;const dx=e.
   if(Math.hypot(dx,dy)>8)return;
   mp.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);ray.setFromCamera(mp,cam);
   if(state==='scan'){const h=ray.intersectObjects(Object.values(CARDS).map(c=>c.mesh))[0];if(h){const k=h.object.userData.card;scan(k);}}
-  else if(state==='fight'&&!busy){const h=ray.intersectObject(floor)[0];if(h){const q=scene.worldToLocal(h.point.clone());placeObstacle(q.x,q.z);};}
+  else if(state==='fight'){const h=ray.intersectObject(floor)[0];if(h){const q=scene.worldToLocal(h.point.clone());placeObstacle(q.x,q.z);};}
 });
 
 // ---------- loop ----------
@@ -522,11 +607,82 @@ function arResize(){
   const m=AR.ctrl.getProjectionMatrix(),iw=AR.ctrl.inputWidth,ih=AR.ctrl.inputHeight,ir=iw/ih;
   const d=ir>cr?v.width/iw:v.height/ih;let h=ir>cr?H*d:(W/iw*ih*d);const g=H/h;
   cam.fov=2*Math.atan(1/m[5]*g)*180/Math.PI;cam.near=m[14]/(m[10]-1)/AR.sref;cam.far=m[14]/(m[10]+1)/AR.sref;cam.aspect=W/H;cam.updateProjectionMatrix();
-  v.style.top=-(vh-H)/2+'px';v.style.left=-(vw-W)/2+'px';v.style.width=vw+'px';v.style.height=vh+'px';
+  AR.vl=-(vw-W)/2;AR.vt=-(vh-H)/2;AR.vw=vw;AR.vh=vh;v.style.top=-(vh-H)/2+'px';v.style.left=-(vw-W)/2+'px';v.style.width=vw+'px';v.style.height=vh+'px';
   renderer.setPixelRatio(Math.min(devicePixelRatio||1,2)*0.5);renderer.setSize(W,H,false);
 }
 
+
+// ---------- hand detection (arm raise) ----------
+async function loadHands(){
+  if(AR.hands)return AR.hands;
+  const m=await import('./mediapipe/vision_bundle.mjs');const fs=await m.FilesetResolver.forVisionTasks('./mediapipe/wasm');let hl=null;
+  for(const delegate of ['GPU','CPU']){try{hl=await m.HandLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:'./mediapipe/hand_landmarker.task',delegate},runningMode:'VIDEO',numHands:1});break;}catch(e){console.log('hand model',delegate,e);}}
+  AR.hands=hl;return hl;
+}
+async function handLoop(){
+  let hl=null;try{hl=await loadHands();}catch(e){console.log('hand load failed',e);}
+  if(!hl){setMsg('Step 3 · Raise your arm between the characters','Hand detection could not load: use the button');return;}
+  const hist=[];let hold=0;
+  while(state==='arm'&&AR){
+    await sleep(100);let r;try{r=hl.detectForVideo(AR.video,performance.now());}catch(e){continue;}
+    AR.handCalls=(AR.handCalls||0)+1;const L=r.landmarks&&r.landmarks[0];
+    if(!L){hold=0;hist.length=0;continue;}
+    const wr=L[0],tip=L[12],palm=L[9],now=performance.now();AR.hand={x:palm.x,y:palm.y};
+    hist.push([now,palm.y]);while(hist.length&&now-hist[0][0]>1200)hist.shift();
+    const lowest=Math.max(...hist.map(h=>h[1])),rise=lowest-palm.y,up=wr.y-tip.y;
+    if(up>0.10&&(palm.y<0.5||rise>0.12))hold++;else hold=Math.max(0,hold-1);
+    if(hold>=3){raiseArm(true);return;}
+  }
+}
+
+// ---------- real object detection: compare the table with how it looked at FIGHT ----------
+const DX0=-6,DZ0=-3.4,DCS=0.3,DNX=40,DNZ=20;
+const DET={cv:document.createElement('canvas'),ref:null,cnt:new Uint8Array(DNX*DNZ),timer:null,blobs:0};
+DET.cv.width=480;DET.cv.height=270;DET.ctx=DET.cv.getContext('2d',{willReadFrequently:true});
+function detSample(){
+  const v=AR.video;DET.ctx.drawImage(v,0,0,480,270);const px=DET.ctx.getImageData(0,0,480,270).data;
+  scene.updateMatrixWorld(true);cam.updateMatrixWorld(true);
+  const out=new Float32Array(DNX*DNZ*3).fill(NaN);
+  for(let i=0;i<DNX;i++)for(let j=0;j<DNZ;j++){
+    _v.set(DX0+(i+.5)*DCS,0,DZ0+(j+.5)*DCS).applyMatrix4(scene.matrixWorld).project(cam);if(_v.z>1)continue;
+    const sx=(_v.x*.5+.5)*innerWidth,sy=(-_v.y*.5+.5)*innerHeight,X=Math.round((sx-AR.vl)/AR.vw*480),Y=Math.round((sy-AR.vt)/AR.vh*270);
+    if(X<2||Y<2||X>477||Y>267)continue;
+    let r=0,g=0,b=0;for(let a=-1;a<=1;a++)for(let c=-1;c<=1;c++){const o=((Y+a)*480+X+c)*4;r+=px[o];g+=px[o+1];b+=px[o+2];}
+    const o=(i+j*DNX)*3;out[o]=r/9;out[o+1]=g/9;out[o+2]=b/9;
+  }
+  return out;
+}
+function detRebase(){if(!AR)return;DET.ref=detSample();DET.cnt.fill(0);clearRealObstacles();if(!DET.timer)DET.timer=setInterval(detStep,350);}
+function clearRealObstacles(){for(const o of OBS.slice())if(o.kind==='real')dropObstacle(o);}
+function detStep(){
+  if(!AR||state!=='fight'||!DET.ref)return;
+  const cur=detSample(),ref=DET.ref,ratios=[];
+  for(let c=0;c<DNX*DNZ;c++){const o=c*3;if(isNaN(cur[o])||isNaN(ref[o]))continue;const a=cur[o]+cur[o+1]+cur[o+2],b=ref[o]+ref[o+1]+ref[o+2];if(b>30)ratios.push(a/b);}
+  if(ratios.length<60)return;ratios.sort((a,b)=>a-b);const gain=clamp(ratios[ratios.length>>1],0.6,1.6);
+  const active=new Uint8Array(DNX*DNZ);
+  for(let c=0;c<DNX*DNZ;c++){const o=c*3;if(isNaN(cur[o])||isNaN(ref[o])){DET.cnt[c]=0;continue;}
+    const dr=cur[o]/gain-ref[o],dg=cur[o+1]/gain-ref[o+1],db=cur[o+2]/gain-ref[o+2],d=Math.max(Math.abs(dr),Math.abs(dg),Math.abs(db));
+    if(d>42)DET.cnt[c]=Math.min(255,DET.cnt[c]+1);else{DET.cnt[c]=0;ref[o]+=dr*0.04;ref[o+1]+=dg*0.04;ref[o+2]+=db*0.04;}
+    if(DET.cnt[c]>=4)active[c]=1;}
+  const seen=new Uint8Array(DNX*DNZ),blobs=[];
+  for(let c=0;c<DNX*DNZ;c++){if(!active[c]||seen[c])continue;const stack=[c],cells=[];seen[c]=1;
+    while(stack.length){const q=stack.pop();cells.push(q);const qi=q%DNX,qj=(q/DNX)|0;for(const [a,b] of [[1,0],[-1,0],[0,1],[0,-1]]){const ni=qi+a,nj=qj+b;if(ni<0||nj<0||ni>=DNX||nj>=DNZ)continue;const n=ni+nj*DNX;if(active[n]&&!seen[n]){seen[n]=1;stack.push(n);}}}
+    if(cells.length<3)continue;
+    let sx=0,sz=0,R=0,G=0,B=0;for(const q of cells){sx+=DX0+((q%DNX)+.5)*DCS;sz+=DZ0+(((q/DNX)|0)+.5)*DCS;R+=cur[q*3];G+=cur[q*3+1];B+=cur[q*3+2];}
+    const n=cells.length,cx=sx/n,cz=sz/n;R/=n;G/=n;B/=n;
+    if(R>110&&R>G*1.1&&G>B*1.05&&R-B>35)continue; // skin colour: treat as a hand, not an object
+    let rad=0;for(const q of cells)rad=Math.max(rad,Math.hypot(DX0+((q%DNX)+.5)*DCS-cx,DZ0+(((q/DNX)|0)+.5)*DCS-cz));
+    blobs.push({x:cx,z:cz,r:clamp(rad+DCS*0.7,0.4,2.0)});
+  }
+  DET.blobs=blobs.length;
+  const real=OBS.filter(o=>o.kind==='real'),used=new Set();
+  for(const b of blobs){let best=null,bd=1.1;for(const o of real){if(used.has(o))continue;const d=Math.hypot(o.x-b.x,o.z-b.z);if(d<bd){bd=d;best=o;}}
+    if(best){used.add(best);best.x=lerp(best.x,b.x,0.5);best.z=lerp(best.z,b.z,0.5);best.r=lerp(best.r,b.r,0.5);best.miss=0;best.mesh.position.set(best.x,0,best.z);best.mesh.scale.set(best.r,1,best.r);}
+    else if(OBS.length<8){used.add(addObstacle(b.x,b.z,b.r,'real'));}}
+  for(const o of real)if(!used.has(o)&&++o.miss>=6)dropObstacle(o);
+}
+
 reset();tick();
-window.__game={scan,act,get S(){return S},get state(){return state},get turn(){return turn},raiseArm,moveDefs,get busy(){return busy}};
+window.__game={DET,OBS,detRebase,detSample,get AR(){return AR},findPath,addObstacle,scan,act,get S(){return S},get state(){return state},get turn(){return turn},raiseArm,moveDefs,get busy(){return busy}};
 </script>
 </body></html>
