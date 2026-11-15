@@ -37,6 +37,7 @@ button span{display:block;font-weight:500;font-size:11px;color:var(--mut)}
 <div id="tags"></div>
 <div id="msg"></div>
 <div id="fight">FIGHT!</div>
+<div id="lost" style="display:none;position:fixed;top:64px;left:0;right:0;text-align:center;font-weight:700;color:#ffd23f;text-shadow:0 2px 6px #000">Searching for the cards…</div>
 <div id="bar"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -308,6 +309,7 @@ function scanUI(){clearBar();setMsg('Step 1 · Scan a card','Tap a card on the t
 async function scan(k){
   if(busy||S[k].scanned||state!=='scan')return;busy=true;clearBar();S[k].scanned=true;order.push(k);const f=S[k],c=CARDS[k];
   setMsg('Scanning '+c.name+'…');tagEls[k].innerHTML='<b>'+c.name+'</b>scanning…';await sleep(650);
+  if(AR&&AR.haveBoth){CARDS.mark.x=-AR.d/2;CARDS.chel.x=AR.d/2;}
   drawCard(k,true);cardFlash(k);
   f.units=k==='mark'?[makeUnit('mark')]:[makeUnit('big'),makeUnit('small')];
   await Promise.all(f.units.map((u,i)=>popOut(u,c.x+(i?0.8:(k==='chel'?-0.4:0)),c.z+(i?0.5:0))));
@@ -576,11 +578,11 @@ async function startAR(){
     const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}});
     video.srcObject=stream;await new Promise(r=>video.addEventListener('loadedmetadata',r,{once:true}));await video.play();
     video.width=video.videoWidth;video.height=video.videoHeight;$('#stage').prepend(video);
-    const ctrl=new mod.Controller({inputWidth:video.videoWidth,inputHeight:video.videoHeight,maxTrack:2,filterMinCF:0.001,filterBeta:1000,warmupTolerance:5,missTolerance:5,onUpdate:onAR});
+    const ctrl=new mod.Controller({inputWidth:video.videoWidth,inputHeight:video.videoHeight,maxTrack:2,filterMinCF:0.001,filterBeta:1000,warmupTolerance:4,missTolerance:12,onUpdate:onAR});
     setMsg('Loading card scanner…');
     const {dimensions}=await ctrl.addImageTargets('./cards-targets.mind');
     const post=dimensions.map(([p,m])=>new THREE.Matrix4().compose(new THREE.Vector3(p/2,p/2+(m-p)/2,0),new THREE.Quaternion(),new THREE.Vector3(p,p,p)));
-    AR={video,ctrl,post,M:[null,null],ref:-1,sref:dimensions[0][0]/2.2};
+    AR={video,ctrl,post,M:[null,null],rel:[null,null],haveBoth:false,d:6.8,lost:0,sm:null,sref:dimensions[0][0]/2.2};CARDS.mark.x=-3.4;CARDS.chel.x=3.4;
     scene.background=null;grid.visible=false;floor.material=new THREE.ShadowMaterial({opacity:0.35});
     for(const k in CARDS)CARDS[k].mesh.visible=false;
     scene.matrixAutoUpdate=false;ctl.enabled=false;cam.position.set(0,0,0);cam.rotation.set(0,0,0);
@@ -592,14 +594,36 @@ function onAR(d){
   if(d.type!=='updateMatrix'||!AR)return;const i=d.targetIndex,o=d.worldMatrix;
   if(!o){AR.M[i]=null;return;}
   const m=new THREE.Matrix4();m.elements=[...o];m.multiply(AR.post[i]);AR.M[i]=m;
-  const k=i===0?'mark':'chel';if(state==='scan'&&!S[k].scanned&&!busy)scan(k);
+  const k=i===0?'mark':'chel';
+  if(state==='scan'&&!S[k].scanned&&!busy&&(order.length===0||(AR.M[0]&&AR.M[1]&&AR.haveBoth)))scan(k);
 }
+const colV=(m,i)=>new THREE.Vector3().fromArray(m.elements,i*4);
 function arFrame(){
-  let i=AR.M[AR.ref]?AR.ref:(AR.M[0]?0:(AR.M[1]?1:-1));if(i<0)return;AR.ref=i;
-  const c=CARDS[i===0?'mark':'chel'];
-  const W=AR.M[i].clone().multiply(_Rx).multiply(_Sc).multiply(new THREE.Matrix4().makeTranslation(-c.x,-0.03,-c.z));
-  W.premultiply(new THREE.Matrix4().makeScale(1/AR.sref/1,1/AR.sref,1/AR.sref).multiply(new THREE.Matrix4().identity()));
-  scene.matrix.copy(W);scene.matrixWorldNeedsUpdate=true;
+  const M=AR.M,t0=M[0],t1=M[1];let Wp=null;
+  const basis=(ex,n,ez,O)=>new THREE.Matrix4().makeBasis(ex.clone().multiplyScalar(AR.sref),n.clone().multiplyScalar(AR.sref),ez.clone().multiplyScalar(AR.sref)).setPosition(O);
+  if(t0&&t1){
+    // both cards visible: the table frame comes from the line between the two cards
+    const cA=colV(t0,3),cB=colV(t1,3),n=colV(t0,2).normalize().add(colV(t1,2).normalize()).normalize();
+    const ex=cB.clone().sub(cA);const d=ex.length()/AR.sref;ex.addScaledVector(n,-ex.dot(n)).normalize();
+    const ez=new THREE.Vector3().crossVectors(ex,n).normalize();
+    const O=cA.clone().add(cB).multiplyScalar(0.5).addScaledVector(ez,-5*AR.sref);
+    Wp=basis(ex,n,ez,O);
+    AR.rel[0]=t0.clone().invert().multiply(Wp);AR.rel[1]=t1.clone().invert().multiply(Wp);AR.haveBoth=true;AR.d=d;
+  }else{
+    const i=t0?0:(t1?1:-1);
+    if(i<0){if(++AR.lost>45)$('#lost').style.display='block';return;}
+    const mi=M[i];
+    if(AR.haveBoth)Wp=mi.clone().multiply(AR.rel[i]);
+    else{
+      const ex=colV(mi,0).normalize(),n=colV(mi,2).normalize(),ez=new THREE.Vector3().crossVectors(ex,n).normalize(),cx=(i===0?-1:1)*AR.d/2;
+      Wp=basis(ex,n,ez,colV(mi,3).addScaledVector(ex,-cx*AR.sref).addScaledVector(ez,-5*AR.sref));
+    }
+  }
+  AR.lost=0;$('#lost').style.display='none';
+  const Wn=new THREE.Matrix4().makeScale(1/AR.sref,1/AR.sref,1/AR.sref).multiply(Wp);
+  const p=new THREE.Vector3(),q=new THREE.Quaternion(),sc=new THREE.Vector3();Wn.decompose(p,q,sc);
+  if(!AR.sm)AR.sm={p:p.clone(),q:q.clone()};else{AR.sm.p.lerp(p,0.5);AR.sm.q.slerp(q,0.5);}
+  scene.matrix.compose(AR.sm.p,AR.sm.q,new THREE.Vector3(1,1,1));scene.matrixWorldNeedsUpdate=true;
 }
 function arResize(){
   const v=AR.video,W=innerWidth,H=innerHeight,vr=v.videoWidth/v.videoHeight,cr=W/H;let vw,vh;
