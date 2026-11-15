@@ -4,7 +4,9 @@
 :root{--bg:#171b27;--ink:#f4f1ea;--mut:#9aa3b8;--acc:#ff7a2f;--ok:#2fd28a;--bad:#ff4a5a;--panel:#232a3b;--line:#3b4560;color-scheme:dark}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden;touch-action:none}
 #stage{position:fixed;inset:0}
-#stage canvas{display:block;width:100%;height:100%;image-rendering:pixelated}
+#stage{overflow:hidden}
+#stage canvas{position:absolute;left:0;top:0;z-index:1;display:block;width:100%;height:100%;image-rendering:pixelated}
+#stage video{position:absolute;z-index:0}
 #msg{position:fixed;top:0;left:0;right:0;padding:12px max(16px,env(safe-area-inset-right)) 8px max(16px,env(safe-area-inset-left));text-align:center;font-weight:700;font-size:16px;line-height:1.3;pointer-events:none;text-shadow:0 2px 6px #000a}
 #msg small{display:block;font-weight:500;color:var(--mut);font-size:13px;margin-top:2px}
 #bar{position:fixed;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:10px max(16px,env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left));background:linear-gradient(transparent,#0009 40%)}
@@ -232,8 +234,9 @@ function dissolve(root,t,rise){root.traverse(m=>{if(!m.isInstancedMesh)return;co
   for(let i=0;i<base.length;i++){const s=clamp((t-rnd[i]*0.7)/0.3,0,1);o.position.set(base[i][0],base[i][1]+s*rise,base[i][2]);o.scale.setScalar(Math.max(1-s,0.0001));o.updateMatrix();m.setMatrixAt(i,o.matrix);}
   m.instanceMatrix.needsUpdate=true;});}
 
+let AR=null;
 // ---------- scene ----------
-const renderer=new THREE.WebGLRenderer({antialias:false});
+const renderer=new THREE.WebGLRenderer({antialias:false,alpha:true});
 renderer.shadowMap.enabled=true;$('#stage').appendChild(renderer.domElement);
 const scene=new THREE.Scene();scene.background=new THREE.Color('#171b27');
 const cam=new THREE.PerspectiveCamera(42,1,0.1,100);
@@ -243,7 +246,7 @@ const sun=new THREE.DirectionalLight('#ffffff',0.7);sun.position.set(5,10,6);sun
 const floor=new THREE.Mesh(new THREE.PlaneGeometry(40,40),new THREE.MeshLambertMaterial({color:'#2a3142'}));floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
 const grid=new THREE.GridHelper(40,40,'#3b4560','#303850');grid.position.y=0.01;scene.add(grid);
 const fxGroup=new THREE.Group();scene.add(fxGroup);
-function fit(){const a=innerWidth/innerHeight;renderer.setPixelRatio(Math.min(devicePixelRatio||1,2)*0.5);renderer.setSize(innerWidth,innerHeight,false);cam.aspect=a;cam.updateProjectionMatrix();
+function fit(){if(AR){arResize();return;}const a=innerWidth/innerHeight;renderer.setPixelRatio(Math.min(devicePixelRatio||1,2)*0.5);renderer.setSize(innerWidth,innerHeight,false);cam.aspect=a;cam.updateProjectionMatrix();
   const d=15*clamp(1.15/a,1,2.3);cam.position.set(0,ctl.target.y+d*0.55,ctl.target.z+d*0.83);}
 addEventListener('resize',fit);fit();
 
@@ -280,7 +283,7 @@ function reset(){
   if(S)for(const k in S)S[k].units.forEach(u=>scene.remove(u.holder));
   if(obstacle){scene.remove(obstacle.m);}
   S={mark:{scanned:false,hp:6,pow:0,guard:false,units:[]},chel:{scanned:false,hp:6,pow:0,guard:false,units:[]}};
-  order=[];state='scan';turn=null;busy=false;selUnit=0;obstacle=null;ctl.enabled=true;
+  order=[];state='scan';turn=null;busy=false;selUnit=0;obstacle=null;ctl.enabled=!AR;
   drawCard('mark',false);drawCard('chel',false);refreshTags();scanUI();
 }
 function setMsg(a,b){$('#msg').innerHTML=a+(b?'<small>'+b+'</small>':'');}
@@ -294,13 +297,14 @@ function refreshTags(){for(const k in CARDS){const f=S[k],d=tagEls[k];if(!f.scan
   d.style.opacity='1';d.className='tag on'+(turn===k&&state==='fight'?' turn':'');
   d.innerHTML='<b>'+CARDS[k].name+'</b>'+hearts(f.hp)+'<div class="pw">'+[0,1,2].map(i=>'<i class="'+(f.pow>i?'f':'')+'"></i>').join('')+'</div>'+(f.guard?'<div class="gd">DODGING</div>':'');}}
 const _v=new THREE.Vector3();
-function toScreen(x,y,z){_v.set(x,y,z).project(cam);return [(_v.x*.5+.5)*innerWidth,(-_v.y*.5+.5)*innerHeight];}
+function toScreen(x,y,z){_v.set(x,y,z).applyMatrix4(scene.matrixWorld).project(cam);return [(_v.x*.5+.5)*innerWidth,(-_v.y*.5+.5)*innerHeight];}
 function popText(wp,text,color='#fff'){const [x,y]=toScreen(wp.x,wp.y+1.5,wp.z);const d=document.createElement('div');d.className='pop';d.textContent=text;d.style.cssText+=`left:${x}px;top:${y}px;color:${color}`;document.body.appendChild(d);setTimeout(()=>d.remove(),1200);}
 const centerOf=f=>f.units[0].holder.position;
 
 // ---------- scan scenario (steps 1-2) ----------
 function scanUI(){clearBar();setMsg('Step 1 · Scan a card','Tap a card on the table, or use the buttons');
-  btn('Scan Mark’s card',()=>scan('mark'),{cls:'main'});btn('Scan Chelsea’s card',()=>scan('chel'),{cls:'main'});}
+  btn('Scan Mark’s card',()=>scan('mark'),{cls:'main'});btn('Scan Chelsea’s card',()=>scan('chel'),{cls:'main'});
+  if(!AR)btn('Use my camera',startAR);}
 async function scan(k){
   if(busy||S[k].scanned||state!=='scan')return;busy=true;clearBar();S[k].scanned=true;order.push(k);const f=S[k],c=CARDS[k];
   setMsg('Scanning '+c.name+'…');tagEls[k].innerHTML='<b>'+c.name+'</b>scanning…';await sleep(650);
@@ -354,7 +358,7 @@ async function raiseArm(){
 }
 
 // ---------- fight (steps 4-5) ----------
-function startFight(){state='fight';turn=order[0];busy=false;ctl.enabled=true;beginTurn(true);}
+function startFight(){state='fight';turn=order[0];busy=false;ctl.enabled=!AR;beginTurn(true);}
 async function beginTurn(first){
   const f=S[turn];if(!first)f.pow=Math.min(3,f.pow+1);
   if(f.guard){f.guard=false;for(const u of f.units)if(u.sunk){u.sunk=false;await anim(350,t=>{u.holder.position.y=-1.15*(1-t);});}}
@@ -466,15 +470,62 @@ renderer.domElement.addEventListener('pointerup',e=>{if(!down)return;const dx=e.
   if(Math.hypot(dx,dy)>8)return;
   mp.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);ray.setFromCamera(mp,cam);
   if(state==='scan'){const h=ray.intersectObjects(Object.values(CARDS).map(c=>c.mesh))[0];if(h){const k=h.object.userData.card;scan(k);}}
-  else if(state==='fight'&&!busy){const h=ray.intersectObject(floor)[0];if(h)placeObstacle(h.point.x,h.point.z);}
+  else if(state==='fight'&&!busy){const h=ray.intersectObject(floor)[0];if(h){const q=scene.worldToLocal(h.point.clone());placeObstacle(q.x,q.z);};}
 });
 
 // ---------- loop ----------
 const clock=new THREE.Clock();
 function tick(){const t=clock.getElapsedTime();
   for(const k in S)for(const u of S[k].units)if(u.holder.visible)idle(u,t);
-  for(const k in CARDS){const c=CARDS[k],[x,y]=toScreen(c.x,0.05,c.z-0.4);tagEls[k].style.left=x+'px';tagEls[k].style.top=y+'px';}
-  ctl.update();renderer.render(scene,cam);requestAnimationFrame(tick);}
+  for(const k in CARDS){const c=CARDS[k],ti=k==='mark'?0:1;let x,y;if(AR&&AR.M[ti]){_v.set(0,0.1,0.03).applyMatrix4(AR.M[ti]).multiplyScalar(1/AR.sref).project(cam);x=(_v.x*.5+.5)*innerWidth;y=(-_v.y*.5+.5)*innerHeight;}else[x,y]=toScreen(c.x,0.05,c.z-0.4);tagEls[k].style.left=x+'px';tagEls[k].style.top=y+'px';}
+  if(AR)arFrame();else ctl.update();renderer.render(scene,cam);requestAnimationFrame(tick);}
+
+// ---------- real camera + card tracking (MindAR) ----------
+const _Rx=new THREE.Matrix4().makeRotationX(Math.PI/2),_Sc=new THREE.Matrix4().makeScale(1/2.2,1/2.2,1/2.2);
+async function startAR(){
+  if(AR||busy)return;
+  try{
+    setMsg('Starting camera…','Allow camera access when asked');
+    const mod=await import('./mindar/mindar-image.prod.js');
+    const video=document.createElement('video');video.setAttribute('playsinline','');video.muted=true;video.autoplay=true;
+    const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}});
+    video.srcObject=stream;await new Promise(r=>video.addEventListener('loadedmetadata',r,{once:true}));await video.play();
+    video.width=video.videoWidth;video.height=video.videoHeight;$('#stage').prepend(video);
+    const ctrl=new mod.Controller({inputWidth:video.videoWidth,inputHeight:video.videoHeight,maxTrack:2,filterMinCF:0.001,filterBeta:1000,warmupTolerance:5,missTolerance:5,onUpdate:onAR});
+    setMsg('Loading card scanner…');
+    const {dimensions}=await ctrl.addImageTargets('./cards-targets.mind');
+    const post=dimensions.map(([p,m])=>new THREE.Matrix4().compose(new THREE.Vector3(p/2,p/2+(m-p)/2,0),new THREE.Quaternion(),new THREE.Vector3(p,p,p)));
+    AR={video,ctrl,post,M:[null,null],ref:-1,sref:dimensions[0][0]/2.2};
+    scene.background=null;grid.visible=false;floor.material=new THREE.ShadowMaterial({opacity:0.35});
+    for(const k in CARDS)CARDS[k].mesh.visible=false;
+    scene.matrixAutoUpdate=false;ctl.enabled=false;cam.position.set(0,0,0);cam.rotation.set(0,0,0);
+    arResize();await ctrl.dummyRun(video);ctrl.processVideo(video);
+    scanUI();setMsg('Point the camera at a card','Lay both cards flat, side by side, with about 2 card-widths between them. Keep the table above the cards in view.');
+  }catch(e){AR=null;console.log(e);setMsg('Camera mode is not available here','Open the GitHub Pages link over https and allow the camera. You can still play with the scan buttons.');}
+}
+function onAR(d){
+  if(d.type!=='updateMatrix'||!AR)return;const i=d.targetIndex,o=d.worldMatrix;
+  if(!o){AR.M[i]=null;return;}
+  const m=new THREE.Matrix4();m.elements=[...o];m.multiply(AR.post[i]);AR.M[i]=m;
+  const k=i===0?'mark':'chel';if(state==='scan'&&!S[k].scanned&&!busy)scan(k);
+}
+function arFrame(){
+  let i=AR.M[AR.ref]?AR.ref:(AR.M[0]?0:(AR.M[1]?1:-1));if(i<0)return;AR.ref=i;
+  const c=CARDS[i===0?'mark':'chel'];
+  const W=AR.M[i].clone().multiply(_Rx).multiply(_Sc).multiply(new THREE.Matrix4().makeTranslation(-c.x,-0.03,-c.z));
+  W.premultiply(new THREE.Matrix4().makeScale(1/AR.sref/1,1/AR.sref,1/AR.sref).multiply(new THREE.Matrix4().identity()));
+  scene.matrix.copy(W);scene.matrixWorldNeedsUpdate=true;
+}
+function arResize(){
+  const v=AR.video,W=innerWidth,H=innerHeight,vr=v.videoWidth/v.videoHeight,cr=W/H;let vw,vh;
+  if(vr>cr){vh=H;vw=vh*vr;}else{vw=W;vh=vw/vr;}
+  const m=AR.ctrl.getProjectionMatrix(),iw=AR.ctrl.inputWidth,ih=AR.ctrl.inputHeight,ir=iw/ih;
+  const d=ir>cr?v.width/iw:v.height/ih;let h=ir>cr?H*d:(W/iw*ih*d);const g=H/h;
+  cam.fov=2*Math.atan(1/m[5]*g)*180/Math.PI;cam.near=m[14]/(m[10]-1)/AR.sref;cam.far=m[14]/(m[10]+1)/AR.sref;cam.aspect=W/H;cam.updateProjectionMatrix();
+  v.style.top=-(vh-H)/2+'px';v.style.left=-(vw-W)/2+'px';v.style.width=vw+'px';v.style.height=vh+'px';
+  renderer.setPixelRatio(Math.min(devicePixelRatio||1,2)*0.5);renderer.setSize(W,H,false);
+}
+
 reset();tick();
 window.__game={scan,act,get S(){return S},get state(){return state},get turn(){return turn},raiseArm,moveDefs,get busy(){return busy}};
 </script>
